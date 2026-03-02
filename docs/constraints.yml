@@ -1,0 +1,194 @@
+project:
+  name: "aiw"
+  stack: "Python 3.10+; local CLI; Codex CLI integration; git"
+
+  layers:
+    - name: cli
+      allowed_imports:
+        - orchestrator
+        - workflow
+        - tasks
+        - infra
+
+    - name: orchestrator
+      allowed_imports:
+        - workflow
+        - tasks
+        - infra
+
+    - name: workflow
+      allowed_imports:
+        - tasks
+        - infra
+
+    - name: tasks
+      allowed_imports:
+        - infra
+
+    - name: infra
+      allowed_imports: []
+
+  boundaries:
+    locked_artifacts:
+      - "PRD.md"
+      - "SDD.md"
+      - "constraints.yml"
+      - "adrs/**"
+
+    change_request:
+      file: "CHANGE_REQUEST.md"
+      required_for_modifying_locked_artifacts: true
+      required_reapproval: true
+
+    do_not_touch_paths:
+      - ".aiw/**"
+
+    internal_tool_state_write_policy:
+      paths:
+        - ".aiw/**"
+      writer: "aiw_only"
+      coding_agents_must_not_write: true
+
+    allowed_edit_paths:
+      - "aiw/**"
+      - "tests/**"
+      - "tasks/**"
+
+    task_write_scope:
+      enforce: true
+      rule: "coding_agents_may_only_modify_files_in_current_task_allowlist"
+      reject_out_of_scope_changes: true
+      abort_on_excessive_diff: true
+
+  workflow:
+    state_file: ".aiw/workflow_state.json"
+    enforce_state_machine: true
+
+    states:
+      - "INIT"
+      - "PRD_DRAFT"
+      - "PRD_APPROVED"
+      - "SDD_DRAFT"
+      - "SDD_APPROVED"
+      - "PLANNED"
+      - "EXECUTING"
+      - "BLOCKED"
+
+    locked_when_approved:
+      - artifact: "PRD.md"
+        lock_state: "PRD_APPROVED"
+      - artifact: "SDD.md"
+        lock_state: "SDD_APPROVED"
+
+    allowed_commands_by_state:
+      INIT:
+        - "aiw init"
+        - "aiw prd"
+
+      PRD_DRAFT:
+        - "edit PRD.md"
+        - "aiw approve-prd"
+
+      PRD_APPROVED:
+        - "aiw sdd"
+        - "aiw request-change"
+
+      SDD_DRAFT:
+        - "edit SDD.md"
+        - "aiw approve-sdd"
+
+      SDD_APPROVED:
+        - "aiw decompose"
+        - "aiw request-change"
+
+      PLANNED:
+        - "aiw go TASK-###"
+
+      EXECUTING:
+        - "aiw undo"
+        - "aiw reset TASK-###"
+
+      BLOCKED:
+        - "aiw request-change"
+        - "aiw go TASK-###"
+
+    illegal_actions_must_fail_hard: true
+
+  agents:
+    task_scoped_coding_agents: true
+    one_task_per_agent_session: true
+    no_cross_task_edits_per_execution: true
+    task_id_pattern: "^TASK-[0-9]{3}$"
+
+    task_memory:
+      persistent_artifacts_only: true
+      per_task_capsule_log: "tasks/TASK-###.log.md"
+
+    global_artifacts:
+      - "PRD.md"
+      - "SDD.md"
+      - "adrs/**"
+      - "constraints.yml"
+      - "tasks/**"
+
+    allowed_context_inputs:
+      - "tasks/TASK-###.md"
+      - "tasks/TASK-###.log.md"
+      - "constraints.yml"
+      - "relevant_code_snippets"
+      - "relevant_diffs"
+      - "bounded_test_failure_excerpt"
+
+  codex_integration:
+    required: true
+    backend_contract: "unified_diff_only"
+
+    iterations:
+      max_iterations_per_task: 3
+      enforce_bounded_loop: true
+
+      on_exhaustion:
+        transition_state_to: "BLOCKED"
+        generate_blocker_report: true
+        blocker_report_path: "tasks/TASK-###/blocker_report.md"
+        append_summary_to_capsule_log: true
+
+  quality:
+    must_have:
+      - "tests added or updated for any new logic"
+      - "no large rewrites without an approved TASK"
+      - "run quality gates each iteration: lint, typecheck, tests"
+
+    lint: "TBD"
+    typecheck: "TBD"
+    test_command: "TBD"
+
+  security:
+    secrets_policy: "never hardcode secrets/keys/tokens"
+    logging_policy: "never log secrets"
+    authz_policy: "not_applicable_for_local_cli_unless_future_prd_says_otherwise"
+
+  performance:
+    constraints:
+      - "abort_if_cost_threshold_exceeded"
+      - "abort_if_token_bound_exceeded"
+      - "abort_if_runtime_bound_exceeded"
+
+  observability:
+    traces:
+      enabled: true
+      path: ".aiw/runs/run-<timestamp>.jsonl"
+      required_events:
+        - "agent_spawned"
+        - "patch_applied"
+        - "test_run"
+        - "test_failed"
+        - "fix_attempt"
+        - "blocker"
+
+    tui_tree_required: true
+    diff_summary_required: true
+
+    failure_excerpt:
+      required: true
+      bounded_length: "TBD"
