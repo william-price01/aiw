@@ -18,3 +18,10 @@ venv/
 
 # Tool state (AIW will manage separately later)
 .aiw/
+# More Python
+__pycache__/
+*.pyc
+*.egg-info/
+dist/
+build/
+.venv/
