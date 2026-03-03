@@ -1,97 +1,164 @@
 # SDD: aiw (AI Workflow) — Local AI Coding Orchestrator
 
-This revision corrects:
+This SDD clarifies execution semantics and hardens the workflow contract.
 
-* `aiw init` scaffolding (authoritative structure)
-* Explicit, enforceable workflow state machine
-* Strict single-task-scoped coding agent model
-* Locked artifact + change request rules
-* Bounded execution loop as a formal state machine
+It does **not** redesign AIW.
+It does **not** introduce new subsystems.
+It does **not** add autonomous DAG execution into MVP.
 
-The system remains minimal, local-first, single-process, and speed-optimized.
+Key clarifications included:
+
+* Task Selection vs Task Execution boundary
+* Codex session model (Coder + Fixer)
+* Crash / stale `EXECUTING` recovery
 
 ---
 
 # 1. System Overview
 
-`aiw` is a local CLI AI coding orchestrator for a single advanced developer.
+AIW is an artifact-driven execution engine governed by a strict workflow state machine.
 
-It provides:
+It is not a conversational wrapper.
+It executes bounded work from explicit task artifacts.
 
-* Deterministic artifacts (PRD, SDD, tasks)
-* Strict workflow state locking
-* Task-scoped coding agents
-* Bounded patch → test → fix loop
-* JSONL structured tracing
-* Terminal tree-style observability
-* Git-based undo/reset
+Core principles:
 
-No SaaS.
-No daemon.
-No distributed components.
-No cross-task conversational memory.
-
-All persistence is artifact-based.
+* Explicit workflow gating (hard state enforcement)
+* Artifact-locked specs (PRD / SDD / ADRs / constraints)
+* Deterministic planning outputs (DAG + tasks)
+* Bounded execution loop (Coder + Fixer)
+* Deterministic termination (`PASS` or `BLOCKED`)
 
 ---
 
 # 2. Authoritative `aiw init` Scaffold
 
+Creates the minimum internal tool state directory:
+
+* `.aiw/`
+* `.aiw/workflow_state.json`
+* `.aiw/runs/`
+
+---
+
 ## 2.1 User-Facing Artifacts (Editable by User)
 
-Created in repository root:
+User-authored artifacts live in `docs/`:
 
-```
-PRD.md
-SDD.md
-constraints.yml
-adrs/
-tasks/
-```
+* `docs/prd.md`
+* `docs/sdd.md`
+* `docs/constraints.yml`
+* `docs/adrs/`
+* `docs/tasks/`
 
-### Purpose
+Reports live in:
 
-| Artifact          | Owner         | Description                   |
-| ----------------- | ------------- | ----------------------------- |
-| `PRD.md`          | User-authored | Product requirements          |
-| `SDD.md`          | User-authored | System design                 |
-| `constraints.yml` | User-authored | Architecture boundaries       |
-| `adrs/`           | User-authored | Architecture Decision Records |
-| `tasks/`          | User-authored | TASK-###.md files             |
+* `docs/reports/`
 
-These are **version-controlled artifacts** and define system truth.
+Change requests live in:
+
+* `docs/requests/CHANGE_REQUEST.md`
 
 ---
 
 ## 2.2 Tool-Internal State (Not User-Authored)
 
-Created under:
+Internal state is owned by AIW:
 
-```
-.aiw/
-  agents/
-  workflow_state.json
-  runs/
-```
+* `.aiw/`
+* `.aiw/workflow_state.json`
+* `.aiw/runs/run-<timestamp>.jsonl`
 
-### Purpose
-
-| Path                       | Description                                  |
-| -------------------------- | -------------------------------------------- |
-| `.aiw/agents/`             | Prompt templates for PRD/SDD/Decompose/Coder |
-| `.aiw/workflow_state.json` | Workflow state + lock tracking               |
-| `.aiw/runs/`               | Per-run JSONL event traces                   |
-
-No additional scaffolding is created.
-No memory directory.
-No hidden task state.
-All task persistence is artifact-based.
+Coding agents must **not** write to `.aiw/**`.
 
 ---
 
-# 3. Global Workflow State Machine
+# 3. Task Selection vs Task Execution Boundary (Conceptual Contract)
 
-The system is governed by a strict workflow state machine stored in:
+The system MUST separate:
+
+* **Task Selection** — which TASK is chosen
+* **Task Execution** — how the execution loop runs
+
+---
+
+## 3.1 Task Selection (Which TASK to run)
+
+MVP task selection is manual:
+
+* User chooses a `docs/tasks/TASK-###.md`
+* User runs: `aiw go TASK-###`
+
+Task selection is not part of the execution engine.
+
+Future selection mechanisms may exist (e.g., deterministic DAG selection), but in MVP there is:
+
+* No scheduler
+* No daemon
+* No concurrency
+* No autonomous chaining
+
+---
+
+## 3.2 Task Execution (How a TASK runs)
+
+Task execution is a deterministic bounded loop:
+
+* Patch
+* Validate
+* Test
+* Fix (optional)
+* Terminate (`PASS` or `BLOCKED`)
+
+The execution engine MUST be independent of the selection mechanism.
+
+No orchestration threads.
+No autonomous task chaining in MVP.
+
+The boundary is conceptual only. No new component is introduced.
+
+---
+
+# 4. AI Session Model (Global)
+
+AIW permits AI assistance across both spec-phase and execution-phase, with distinct contracts.
+
+---
+
+## 4.1 Spec-Phase AI (Artifact Authoring / Revision)
+
+Applies to:
+
+* PRD
+* SDD
+* ADRs
+* constraints
+* decomposition planning
+
+Rules:
+
+* Each spec-phase command may spawn **one bounded AI session**, scoped to the single target artifact (or deterministic output set).
+* Spec-phase AI is **single-pass**.
+* No bounded patch → test → fix loop.
+* No iterative correction cycles.
+
+---
+
+## 4.2 Execution-Phase AI (Task Runs)
+
+Applies to:
+
+* `aiw go TASK-###`
+
+Execution uses the **Coder + Fixer** model with strict iteration caps and enforced write scope.
+
+The execution engine is independent of the task selection mechanism.
+
+---
+
+# 5. Global Workflow State Machine
+
+Stored in:
 
 ```
 .aiw/workflow_state.json
@@ -105,6 +172,10 @@ PRD_DRAFT
 PRD_APPROVED
 SDD_DRAFT
 SDD_APPROVED
+ADRS_DRAFT
+ADRS_APPROVED
+CONSTRAINTS_DRAFT
+CONSTRAINTS_APPROVED
 PLANNED
 EXECUTING
 BLOCKED
@@ -112,348 +183,318 @@ BLOCKED
 
 ---
 
-## State Definitions
+## 5.1 CONSTRAINTS_APPROVED → PLANNED Transition
 
-### INIT
+Under `CONSTRAINTS_APPROVED`:
 
-**Allowed Commands**
+Command:
 
-* `aiw prd`
-* `aiw init`
+```
+aiw decompose
+```
 
-**Transition**
+On success, outputs written:
 
-* Writing PRD → `PRD_DRAFT`
+* `docs/tasks/DAG.md`
+* `docs/tasks/DAG.yml`
+* `docs/tasks/TASK-###.md`
 
----
+Transition:
 
-### PRD_DRAFT
+```
+CONSTRAINTS_APPROVED → PLANNED
+```
 
-**Allowed**
-
-* Edit `PRD.md`
-* `aiw approve-prd`
-
-**Transition**
-
-* Approve → `PRD_APPROVED`
+Decompose must not partially write artifacts. Failure aborts deterministically.
 
 ---
 
-### PRD_APPROVED (LOCKED)
+## 5.2 EXECUTING Entry Semantics
 
-PRD becomes immutable.
+On entering `EXECUTING`:
 
-**Allowed**
+* A `run_id` (UUID) is generated.
+* Written to:
 
-* `aiw sdd`
-* `aiw request-change`
-
-PRD cannot be edited directly.
-
----
-
-### SDD_DRAFT
-
-**Allowed**
-
-* Edit `SDD.md`
-* `aiw approve-sdd`
-
-**Transition**
-
-* Approve → `SDD_APPROVED`
+  * `.aiw/workflow_state.json`
+  * JSONL trace header.
+* Pre-task baseline checkpoint created.
+* State updated atomically.
 
 ---
 
-### SDD_APPROVED (LOCKED)
+## 5.3 Crash / Stale EXECUTING Determinism
 
-SDD becomes immutable.
+On startup:
 
-**Allowed**
+If `.aiw/workflow_state.json` shows:
+
+```
+state = EXECUTING
+```
+
+Then:
+
+* System MUST NOT resume silently.
+* State transitions deterministically to:
+
+```
+BLOCKED
+```
+
+No automatic recovery.
+User must manually resolve and return to `PLANNED` before re-running.
+
+No partial execution resumes are permitted.
+
+---
+
+# 6. Locking Rules (Explicit)
+
+Locks apply after approval states and are enforced via Git diff validation before patch application.
+
+After approval:
+
+* `docs/prd.md` locked after `PRD_APPROVED`
+* `docs/sdd.md` locked after `SDD_APPROVED`
+* `docs/adrs/**` locked after `ADRS_APPROVED`
+* `docs/constraints.yml` locked after `CONSTRAINTS_APPROVED`
+
+During `EXECUTING`, planning artifacts are immutable:
+
+* `docs/tasks/DAG.md`
+* `docs/tasks/DAG.yml`
+* `docs/tasks/TASK-???.md`
+
+Any attempt to modify locked artifacts causes:
+
+* Immediate hard-fail
+* Revert to last checkpoint
+* Emit `LOCK_VIOLATION_HARD_FAIL`
+* Abort run
+
+Workflow state remains unchanged unless explicitly transitioned.
+
+---
+
+# 7. Deterministic Constraints Gate (Preflight)
+
+Before:
 
 * `aiw decompose`
-* `aiw request-change`
+* `aiw go`
+
+AIW MUST validate:
+
+* `docs/constraints.yml` exists
+* Required execution gates configured:
+
+  * `test_command`
+  * `max_iterations`
+  * Scope rules
+* Repository accessible via Git
+
+If validation fails:
+
+* Command aborts immediately
+* No partial artifacts written
+* Emit trace event: `constraint_validation_failed`
 
 ---
 
-### PLANNED
+# 8. Task Lint Preflight Gate
 
-Tasks generated.
+Before execution:
 
-**Allowed**
+* `docs/tasks/TASK-###.md` must exist.
+* Required fields:
 
-* `aiw go TASK-###`
+  * Acceptance criteria
+  * Tests to run
+  * File scope allowlist
+  * Non-goals
+* Scope consistent with `docs/constraints.yml`.
 
----
+If lint fails:
 
-### EXECUTING
-
-One TASK in execution.
-
-**Allowed**
-
-* No PRD/SDD modification
-* Only task execution
-* `aiw undo`
-* `aiw reset`
-
-**Transitions**
-
-* On success → `PLANNED`
-* On exhaustion → `BLOCKED`
+* Execution refused
+* Emit `task_lint_failed`
+* No patch applied
 
 ---
 
-### BLOCKED
-
-Execution failed after max iterations.
-
-**Allowed**
-
-* `aiw request-change`
-* `aiw go TASK-###` (retry)
-
----
-
-# 4. Locking Rules (Mandatory)
-
-Once approved:
-
-* `PRD.md` cannot be modified.
-* `SDD.md` cannot be modified.
-
-Edits require a Change Request.
-
-Direct file modification triggers hard failure.
-
----
-
-# 5. Minimal Change Request Mechanism
-
-When downstream execution requires upstream modification:
-
-1. Create:
-
-```
-CHANGE_REQUEST.md
-```
-
-2. Must contain:
-
-* Reason
-* Affected section
-* Proposed change
-
-3. Approval required:
-
-* Reverts state to `PRD_DRAFT` or `SDD_DRAFT`
-* Requires re-approval
-
-Silent upstream edits are prohibited.
-
----
-
-# 6. Coding Loop State Machine (EXECUTING)
+# 9. Coding Loop State Machine (EXECUTING)
 
 Within `EXECUTING`:
 
-```
-CONTEXT_PACK
-→ PATCH_WRITE
-→ APPLY_PATCH
-→ RUN_TESTS
-→ PASS | FAIL
-```
+1. Coder session produces patch.
+2. AIW validates patch:
 
-If `FAIL`:
+   * Write scope
+   * Locked artifact diffs
+   * Diff size thresholds
+3. If valid:
 
-```
-ERROR_EXTRACT
-→ FIX_ATTEMPT (iteration++)
-→ repeat
-```
+   * Apply patch
+4. Run deterministic tests.
+5. If PASS:
 
-Hard cap:
+   * Log result
+   * Transition to `PLANNED`
+6. If FAIL:
 
-```
-max_iterations = 3 (default)
-```
+   * Spawn Fixer session
+   * Apply fix
+   * Re-run tests
+7. Repeat up to `max_iterations` (default 3).
+8. On exhaustion:
 
-If exceeded:
+   * Emit:
 
-* Generate `tasks/TASK-###/blocker_report.md`
-* Transition to `BLOCKED`
+     * `docs/reports/TASK-###_blocker_report.md`
+     * `docs/reports/TASK-###_followup_tasks.md` (if needed)
+     * `docs/reports/TASK-###_scope_expansion_request.md` (if needed)
+   * Transition to `BLOCKED`
 
----
-
-# 7. Task-Scoped Coding Agent Model (Hard Requirement)
-
-Each `aiw go TASK-###`:
-
-```
-SPAWN_AGENT(TASK-###)
-→ bounded loop
-→ TERMINATE_AGENT
-```
-
-### Rules
-
-A coding agent:
-
-* Works on exactly one task
-* Has no memory beyond current run
-* Does not access other TASK files
-* Is destroyed after execution completes
-
-Each run = new Codex session.
+No background retries.
+No parallel agents.
 
 ---
 
-# 8. Task Context Boundary
+# 10. Codex Session Model (Coder + Fixer)
 
-Agent receives only:
+Each `aiw go TASK-###` run permits:
 
-* `tasks/TASK-###.md`
-* `constraints.yml`
-* Relevant code snippets
-* Relevant diffs
-* Relevant test excerpts
-* `tasks/TASK-###.log.md` (capsule)
+* Exactly one **Coder** session
+* At most one **Fixer** session
 
-No cross-task memory.
-No global conversational memory.
+Fixer session is spawned only if initial test run fails.
 
-Knowledge flows only through committed artifacts.
+## 10.1 Coder Session
 
----
+* One session per run
+* Task-scoped file allowlist enforced
+* Produces bounded patch
 
-# 9. Capsule Memory Model
+## 10.2 Fixer Session
 
-Per task:
+* Spawned only after failure
+* Produces bounded fix patch
+* Must remain within same write scope
 
-```
-tasks/TASK-###.log.md
-```
+Strict limits:
 
-Contains:
-
-* Iteration summaries
-* Diffstats
-* Failure excerpts
-* Status
-
-No JSON capsule.
-Human-readable Markdown only.
-
-Bounded size enforced.
+* Maximum iterations per task: 3
+* No additional model calls beyond Coder + Fixer
+* No cross-task edits
 
 ---
 
-# 10. TUI Rendering Model
+# 11. Constraint Enforcement
 
-TUI shows:
+Constraints enforced via deterministic gates:
+
+* Write scope validation
+* Locked artifact diff checks
+* Diff size thresholds
+* Layering / import boundaries
+* Required test command presence
+* Forbidden path checks
+
+Quality gate failures MUST emit:
 
 ```
-TASK-001
-└── CodexAgent
-    ├── RepoScan
-    ├── PatchWrite
-    ├── ApplyPatch
-    ├── TestRun
-    └── FixAttempt (if any)
+quality_gate_failed
 ```
-
-There is exactly one Codex agent instance per task execution.
-
-Subagents are logical spans only.
 
 ---
 
-# 11. Execution Flow Updates
+# 12. Backend Integration
 
-## `aiw go TASK-###`
+AIW integrates with Codex CLI in a bounded manner:
 
-1. Validate workflow state = `PLANNED`
-2. Transition → `EXECUTING`
-3. Spawn Codex agent
-4. Run bounded loop
-5. On success:
+* One Codex session per phase invocation
+* No streaming orchestration threads
+* No autonomous agent loops
 
-   * Terminate agent
-   * Transition → `PLANNED`
-6. On exhaustion:
-
-   * Write blocker report
-   * Transition → `BLOCKED`
+Codex output is treated as a patch proposal.
+Git diff is authoritative.
 
 ---
 
-# 12. Backend Integration (Codex CLI)
+# 13. Checkpointing / Undo / Reset
 
-Backend lifecycle:
+## Checkpoints
+
+Created:
+
+* Before `EXECUTING` entry
+* After each applied patch
+
+Implemented via Git commits or deterministic refs.
+
+## `aiw undo`
+
+Reverts most recent checkpoint for current run.
+
+## `aiw reset TASK-###`
+
+Resets working tree to baseline for selected task run.
+
+Both operations are deterministic.
+
+---
+
+# 14. BLOCKED Retry Semantics
+
+When in `BLOCKED`:
+
+* No automatic retries
+* User must resolve:
+
+  * Missing constraints
+  * Failing tests
+  * Scope mismatch
+  * Environment mismatch
+
+Retry requires:
+
+* Returning to `PLANNED`
+* Re-running `aiw go TASK-###`
+
+---
+
+# 15. TUI Rendering Model
+
+TUI derives strictly from:
+
+* Workflow state
+* Task artifacts
+* Run trace events
+
+No speculative UI state.
+
+---
+
+# 16. File Structure
 
 ```
-SPAWN
-→ propose_patch(context)
-→ return unified diff
-→ TERMINATE
-```
-
-Must output unified diff only.
-
-No session reuse.
-No multi-task reuse.
-
----
-
-# 13. Failure Handling
-
-### Patch Violates Scope
-
-* Abort iteration
-* Count as failure
-
-### Tests Fail
-
-* Extract bounded excerpt
-* Append to `TASK-###.log.md`
-
-### Iteration Cap Exceeded
-
-* Write blocker report
-* Transition to `BLOCKED`
-
----
-
-# 14. Undo / Reset
-
-### `aiw undo`
-
-* Git reset to previous snapshot
-
-### `aiw reset TASK-###`
-
-* Git reset to pre-task snapshot
-* Clear `TASK-###.log.md`
-
-Snapshots recorded per iteration.
-
----
-
-# 15. File Structure (Corrected)
-
-```
-PRD.md
-SDD.md
-constraints.yml
-CHANGE_REQUEST.md (if exists)
-adrs/
-tasks/
-  TASK-001.md
-  TASK-001.log.md
-  TASK-001/
-    blocker_report.md
+docs/
+  prd.md
+  sdd.md
+  constraints.yml
+  adrs/
+  tasks/
+    DAG.md
+    DAG.yml
+    TASK-001.md
+    TASK-001.log.md
+  reports/
+    TASK-001_blocker_report.md
+    TASK-001_scope_expansion_request.md
+    TASK-001_followup_tasks.md
+  requests/
+    CHANGE_REQUEST.md
 .aiw/
   agents/
   workflow_state.json
@@ -461,39 +502,23 @@ tasks/
     run-<timestamp>.jsonl
 ```
 
-No additional directories.
-
 ---
 
-# 16. Consistency Guarantees
+# 17. Architecture Decision Records (Updated Clarifications)
 
-* One coding agent per task run
-* Locked upstream docs after approval
-* Deterministic bounded loop
-* Artifact-based persistence only
-* No cross-task conversational memory
+## ADR-009: Execution Engine Isolation
 
----
+Task execution engine must not depend on task selection mechanism.
 
-# 17. Architecture Decision Records (Updated)
+## ADR-010: Two-Session Codex Model
 
-## ADR-001: Artifact-Locked Workflow
+Each task run permits exactly one Coder session and one Fixer session.
 
-Approved docs become immutable until change request resolves.
+## ADR-011: Deterministic Crash Handling
 
-## ADR-002: Single Task-Scoped Coding Agent
+Stale `EXECUTING` state transitions to `BLOCKED` on startup.
 
-Each `aiw go` spawns exactly one Codex session.
+## ADR-012: Hard Constraints Gate
 
-## ADR-003: Explicit Workflow State Machine
-
-State stored in `.aiw/workflow_state.json` and strictly enforced.
-
-## ADR-004: Markdown Capsule Memory
-
-Task memory stored in `TASK-###.log.md` (not hidden JSON).
-
-## ADR-005: Bounded Execution Loop
-
-Max 3 iterations. Hard transition to `BLOCKED` on exhaustion.
+`docs/constraints.yml` and execution gates must validate before `decompose` or `go`.
 

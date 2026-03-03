@@ -79,3 +79,4 @@ There is **never more than one active coding agent per task execution**.
 
 * Slight overhead in session creation.
 * No automatic knowledge carryover between tasks.
+

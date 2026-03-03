@@ -11,7 +11,9 @@ Brute-force coding with chat-based AI tools (e.g., Claude Code) is fast but inef
 - Costs are unpredictable.
 - Artifacts (PRD, SDD, tasks) are inconsistent.
 
-AIW is a **local CLI-based AI coding orchestrator** designed for a single advanced developer. It must match or exceed Claude Code in speed while adding structure, reproducibility, visibility, and bounded execution.
+AIW is a **spec-locked, deterministic AI execution engine governed by an explicit workflow state machine**. It must match or exceed Claude Code in speed while adding structure, reproducibility, visibility, and bounded execution.
+
+AIW is artifact-driven. It executes work strictly from versioned artifacts (PRD, SDD, constraints, ADRs, tasks). It does not function as a free-form chat wrapper.
 
 It is not a SaaS product. It runs locally inside a git repository.
 
@@ -32,318 +34,357 @@ No multi-user support is required.
 
 ## 3. User Stories
 
-1. As a developer, I run `aiw` and enter an interactive coding session instantly.
-2. As a developer, I run `aiw go TASK-001` and the system executes a bounded patch → test → fix loop automatically.
-3. As a developer, I see visible subagent phases (e.g., Planner → Coder → Tester → Fixer).
-4. As a developer, I can inspect a structured JSONL trace of what happened.
-5. As a developer, each task has a small persistent memory capsule that avoids context bloat.
-6. As a developer, AIW enforces write-scope constraints to avoid unsafe modifications.
-7. As a developer, the loop stops after N attempts and generates a blocker report.
-8. As a developer, I can undo/reset changes quickly.
-9. As a developer, I can initialize a new project with spec templates in seconds.
-10. As a developer, I spend less money than brute-force chat iteration.
+1) As a developer, I want AIW to enforce hard execution boundaries so AI does not modify forbidden files or expand scope silently.
+
+2) As a developer, I want deterministic, inspectable artifacts so I can reproduce work and understand what happened without trusting the model’s narrative.
+
+3) As a developer, I want bounded iteration loops so tasks terminate deterministically (PASS or BLOCKED) without infinite refinement.
+
+4) As a developer, I want per-task logs and structured run traces so I can audit changes and failures.
 
 ---
 
 ## 4. Scope (In)
 
-### 4.1 Local CLI Tool
+AIW MVP must support:
 
-- Single binary or CLI entrypoint: `aiw`
-- Works inside existing git repository
-- No web UI
-- No server process
-- No cloud infra required
+- A spec-locked workflow (PRD → SDD → ADRs → constraints → planning → execution).
+- Explicit workflow state machine enforcement via `.aiw/workflow_state.json`.
+- Constraints enforcement:
+  - write scope validation
+  - diff size thresholds
+  - required quality gates
+  - layer import boundaries
+- A bounded execution engine:
+  - one selected task at a time
+  - Coder + optional Fixer sessions
+  - deterministic termination
+- Deterministic decomposition:
+  - generate `docs/tasks/DAG.md` + `docs/tasks/DAG.yml`
+  - generate `docs/tasks/TASK-###.md` task specs
+- Deterministic logging:
+  - per-task capsule log
+  - structured JSONL run trace
 
----
+User-authored authoritative artifacts:
 
-### 4.2 Project Initialization
+- `docs/prd.md`
+- `docs/sdd.md`
+- `docs/constraints.yml`
+- `docs/adrs/**`
+- `docs/tasks/**`
 
-Command: `aiw init`
+Reports must live in:
 
-- Creates `.aiw/` directory
-- Creates:
-  - `.aiw/tasks/`
-  - `.aiw/memory/`
-  - `.aiw/traces/`
-  - `.aiw/templates/`
-- Copies prompt templates:
-  - PRD agent
-  - SDD agent
-  - Decomposer agent
-  - Constraints agent
-- Initializes config file (`aiw.yaml`)
-- Validates git repository presence
+- `docs/reports/`
 
----
+Change requests must live in:
 
-### 4.3 Spec Pipeline
-
-Commands:
-- `aiw prd`
-- `aiw sdd`
-- `aiw decompose`
-
-Capabilities:
-
-- Generate PRD from rough input.
-- Generate SDD from PRD.
-- Decompose SDD into task DAG.
-- Save deterministic artifacts:
-  - `docs/prd.md`
-  - `docs/sdd.md`
-  - `docs/tasks.md`
-
-No architectural overreach beyond local files.
+- `docs/requests/CHANGE_REQUEST.md`
 
 ---
 
-### 4.4 Coding Loop (Core)
+## 5. Workflow State Machine (Authoritative)
 
-Command:
-- `aiw go TASK-001`
+AIW is governed by an explicit state machine stored in:
 
-Flow:
+`.aiw/workflow_state.json`
 
-1. Load task capsule.
-2. Spawn subagents:
-   - Planner (optional)
-   - Coder (via Codex CLI)
-   - Tester
-   - Fixer
-3. Apply patch.
-4. Run tests.
-5. Extract failure excerpt (bounded length).
-6. Attempt fix.
-7. Stop after max N iterations (default: 3).
-8. If unresolved → generate blocker report.
+### 5.1 States
 
-Constraints:
-
-- Enforce write-scope (file allowlist from task definition).
-- Reject changes outside scope.
-- Abort on excessive diff size.
+- `INIT`
+- `PRD_DRAFT` → `PRD_APPROVED`
+- `SDD_DRAFT` → `SDD_APPROVED`
+- `ADRS_DRAFT` → `ADRS_APPROVED`
+- `CONSTRAINTS_DRAFT` → `CONSTRAINTS_APPROVED`
+- `PLANNED`
+- `EXECUTING`
+- `BLOCKED`
 
 ---
 
-### 4.5 Per-Task Capsule Memory
+### 5.2 Command Allowance by State
 
-Each task gets:
+- `INIT`
+  - `aiw init`
+  - `aiw prd`
 
-`.aiw/memory/TASK-001.json`
+- `PRD_DRAFT`
+  - edit PRD
+  - approve PRD → `PRD_APPROVED`
 
-Contains:
+- `PRD_APPROVED`
+  - `aiw sdd`
 
-- Summary
-- Attempts
-- Failures
-- Final status
-- Key artifacts
+- `SDD_DRAFT`
+  - edit SDD
+  - approve SDD → `SDD_APPROVED`
 
-Capsule must remain small (e.g., < 10KB target).
+- `SDD_APPROVED`
+  - `aiw adrs`
 
-Purpose:
-- Avoid reloading entire project context.
-- Preserve critical state only.
+- `ADRS_DRAFT`
+  - edit ADRs
+  - approve ADRs → `ADRS_APPROVED`
 
----
+- `ADRS_APPROVED`
+  - `aiw constraints`
 
-### 4.6 Observability
+- `CONSTRAINTS_DRAFT`
+  - edit constraints
+  - approve constraints → `CONSTRAINTS_APPROVED`
 
-1. Structured event log:
-   - `.aiw/traces/run-<timestamp>.jsonl`
-   - Each line: structured event
-     - agent_spawned
-     - patch_applied
-     - test_run
-     - test_failed
-     - fix_attempt
-     - blocker
+- `CONSTRAINTS_APPROVED`
+  - `aiw decompose` (ONLY allowed from `CONSTRAINTS_APPROVED`)
 
-2. Terminal trace view:
-   - Tree-style subagent rendering.
-   - Clear phase transitions.
+- `PLANNED`
+  - manual task selection
+  - `aiw go TASK-###` (ONLY allowed from `PLANNED`)
 
-3. Diff summary:
-   - File list changed
-   - +/- line counts
+- `EXECUTING`
+  - `aiw undo`
+  - `aiw reset TASK-###`
 
-4. Failure excerpt:
-   - Truncated to configurable max length.
+- `BLOCKED`
+  - manual resolution required
+  - optional change request
 
-5. Undo/reset:
-   - Git-based reset of last patch.
-   - `aiw undo`
-
----
-
-### 4.7 Cost Awareness
-
-- Track token usage per run.
-- Estimate cost per run.
-- Abort if cost threshold exceeded.
-- Prevent infinite loops via:
-  - Max iteration bound
-  - Max token bound
-  - Max runtime bound
+Invalid commands in a given state fail deterministically.
 
 ---
 
-### 4.8 Codex CLI Integration
+### 5.3 Locking Rules
 
-- Coding phase delegates to Codex CLI.
-- AIW orchestrates:
-  - Prompt injection
-  - File scope enforcement
-  - Patch validation
-  - Iteration management
+Locks apply **after** approval states.
 
-Codex is replaceable in future, but MVP assumes Codex.
+- `docs/prd.md` immutable after `PRD_APPROVED`.
+- `docs/sdd.md` immutable after `SDD_APPROVED`.
+- `docs/adrs/**` immutable after `ADRS_APPROVED`.
+- `docs/constraints.yml` immutable after `CONSTRAINTS_APPROVED`.
+- During `EXECUTING`, planning artifacts are immutable:
+  - `docs/tasks/DAG.md`
+  - `docs/tasks/DAG.yml`
+  - `docs/tasks/TASK-???.md`
 
----
-
-## 5. Non-Goals (Out of Scope)
-
-- SaaS architecture
-- Web frontend
-- Multi-user support
-- Persistent remote database
-- Microservices
-- Plugin marketplace
-- CI/CD orchestration
-- Autonomous long-running agents
-- Background daemons
-- Distributed execution
-
-Keep minimal and local-first.
+Silent edits to locked artifacts are prohibited.
 
 ---
 
-## 6. Acceptance Criteria (Measurable)
+### 5.4 Change Request Mechanism
 
-AIW is successful if:
+If downstream work requires upstream modification:
 
-### Speed & Loop
+- Create `docs/requests/CHANGE_REQUEST.md`.
+- Specify:
+  - target artifact
+  - reason
+  - impact
+- Locked documents may only be modified after:
+  - explicit change request resolution
+  - re-approval transition
 
-- `aiw go TASK-001` begins execution in < 1 second.
-- Full patch → test → fix loop completes within 2× manual Claude loop time.
-- Max iteration bound enforced (default 3).
-- No infinite loops possible.
-
-### Determinism
-
-- All runs produce:
-  - Trace file
-  - Capsule memory
-- Re-running same task without code changes yields identical plan phase.
-
-### Guardrails
-
-- Files outside task write-scope are never modified.
-- Attempt exceeding diff size threshold aborts.
-- Loop halts after N attempts and produces blocker report.
-
-### Observability
-
-- Subagent tree visible in terminal.
-- JSONL trace file generated every run.
-- Failure excerpt shown and truncated correctly.
-
-### Cost Control
-
-- Token usage recorded.
-- Cost estimate displayed.
-- Configurable hard cost cap enforced.
-
-### Usability
-
-- Single command interactive mode (`aiw`) works.
-- Autopilot mode (`aiw go TASK-001`) works without manual intervention.
-- No web interface required.
-
-### Outcome Metric
-
-After 2 weeks of usage:
-
-- Developer subjectively reports faster iteration vs Claude Code alone.
-- Measured average task completion time reduced by ≥ 20%.
-- Token spend reduced by ≥ 25% vs brute-force iteration baseline.
+State transitions reflect re-approval.
 
 ---
 
-## 7. Technical Assumptions
+### 5.5 AI Mediation Across All Phases
 
-1. Git is installed and repository is clean before run.
-2. Tests are runnable via a standard command (e.g., `pytest`).
-3. Codex CLI is available locally.
-4. Developer operates on macOS or Linux.
-5. Single-threaded orchestration is sufficient for MVP.
-6. Terminal supports ANSI rendering for tree output.
+- All phases (PRD, SDD, ADRs, constraints, decompose, execution) may be AI-assisted.
+- The state machine enforces **structure and gating**, not authorship.
+- Spec-phase AI (PRD/SDD/ADRs/constraints) is single-pass and artifact-scoped (generate or revise the target artifact only).
+- Execution-phase AI uses bounded iterative sessions (Coder + optional Fixer) under strict iteration and write-scope enforcement.
 
----
+## 6. Task Selection vs Task Execution
 
-## 8. Risks
+AIW separates:
 
-### Risk 1: Added Structure Slows Down Loop
-Guardrails may introduce friction.
+- **Task Selection:** Which `TASK-###` to execute.
+- **Task Execution:** How execution proceeds (bounded patch → validate → test → fix loop).
 
-### Risk 2: Codex Latency Dominates Loop
-External CLI may slow iteration.
+MVP task selection is manual:
 
-### Risk 3: Over-Engineering MVP
-Too many abstractions reduce speed.
+- user selects the task file in `docs/tasks/`
+- user runs:
+  - `aiw go TASK-###`
 
-### Risk 4: Context Capsule Insufficient
-Too little memory causes repeated failure loops.
+Execution engine must not depend on how selection happened.
 
-### Risk 5: Diff Rejection Frustration
-Strict write-scope may block legitimate fixes.
+Future extensions may add deterministic selection (e.g., DAG-based), but that is out of scope.
 
 ---
 
-## 9. De-risk Strategy
+## 7. Coding Loop (Core)
 
-1. Build minimal vertical slice:
-   - `aiw go` with bounded loop only.
-2. Measure raw loop speed before adding advanced features.
-3. Start with simple file-allowlist enforcement.
-4. Keep capsule schema minimal and extensible.
-5. Add telemetry from day one to measure loop duration and cost.
-6. Dogfood exclusively on real tasks.
+### 7.1 Overview
 
----
+The execution loop is strictly bounded:
 
-## 10. MVP Milestones
+- One selected task per run.
+- One Coder session per task run.
+- Optional Fixer session only after failed test run.
+- Hard max iteration cap (default: 3).
+- Deterministic termination:
+  - PASS → `PLANNED`
+  - exhaustion → `BLOCKED`
 
-### Milestone 1 – Minimal Loop
-- `aiw go TASK-001`
-- Patch → test → fix
-- Max 3 attempts
-- Git-based undo
-- Basic terminal output
-
-### Milestone 2 – Guardrails
-- Write-scope enforcement
-- Diff size cap
-- Failure excerpt extraction
-- Blocker report generation
-
-### Milestone 3 – Observability
-- JSONL trace logging
-- Tree-style agent rendering
-- Cost tracking
-
-### Milestone 4 – Spec Pipeline
-- `aiw prd`
-- `aiw sdd`
-- `aiw decompose`
-- Deterministic artifact generation
+No background scheduler.
+No daemon.
+No concurrency.
 
 ---
 
-AIW MVP is complete when:
+### 7.2 Execution Flow
 
-- It is used daily for real development.
-- It replaces brute-force chat iteration.
-- It feels faster, not heavier.
-- It produces structured, reproducible artifacts without slowing execution.
+1. Validate state (`PLANNED` required).
+2. Validate constraints (see below).
+3. Transition to `EXECUTING`.
+4. Spawn Coder session.
+5. Apply patch.
+6. Run deterministic local tests.
+7. If tests PASS:
+   - Update task log.
+   - Transition to `PLANNED`.
+   - Terminate.
+8. If tests FAIL:
+   - Spawn Fixer session.
+   - Apply fix.
+   - Re-run tests.
+9. Stop after max N iterations (default: 3).
+10. If still failing:
+    - Generate `docs/reports/TASK-###_blocker_report.md`.
+    - Update task log.
+    - Transition to `BLOCKED`.
+
+Agent terminates on PASS or BLOCKED.
+
+---
+
+### 7.3 Constraints Finalization Gate
+
+`docs/constraints.yml` is part of the spec-locked contract.
+
+Before `aiw decompose` or `aiw go`:
+
+- Required execution gates (e.g., `test_command`) must be set.
+- Placeholders or unset required fields cause deterministic refusal.
+- Partial execution is not allowed if constraints are invalid.
+
+AIW refuses execution if constraints are incomplete.
+
+---
+
+### 7.4 Deterministic Artifacts (Execution)
+
+Execution artifacts are authoritative, deterministic, and append-only where applicable:
+
+- Task spec: `docs/tasks/TASK-###.md`
+- Task capsule log (append-only): `docs/tasks/TASK-###.log.md`
+- Structured run trace: `.aiw/runs/run-<timestamp>.jsonl`
+- Workflow state: `.aiw/workflow_state.json`
+
+Task capsule log contains:
+
+- chosen task
+- constraints snapshot hash
+- applied diffs summaries per iteration
+- test results per iteration
+- PASS or BLOCKED termination
+
+Git diff is the source of truth for code changes.
+
+---
+
+### 7.5 Guardrails
+
+- Write-scope enforced per task.
+- Cross-task edits rejected.
+- Diff size threshold enforced.
+- Max iteration bound (default 3).
+- Max token/cost bound.
+- Max runtime bound.
+- If a task is detected as too large to complete within bounded iterations, AIW generates `docs/reports/TASK-###_followup_tasks.md` with proposed smaller tasks and transitions to `BLOCKED` instead of thrashing or expanding scope mid-run. If the correct fix is to expand scope, AIW emits `docs/reports/TASK-###_scope_expansion_request.md` and transitions to `BLOCKED`.
+
+---
+
+### 7.6 Observability
+
+- Structured run log:
+  - `.aiw/runs/run-<timestamp>.jsonl`
+- Required trace events:
+  - state_transition
+  - constraint_validation
+  - scope_validation
+  - diff_threshold_check
+  - test_run_started
+  - test_run_failed
+  - test_run_passed
+  - fixer_spawned
+  - iteration_exhausted
+  - quality_gate_failed
+  - blocked
+  - run_complete
+
+---
+
+## 8. Non-Goals (Out of Scope)
+
+- Automatic DAG execution
+- Background scheduler / daemon
+- Concurrency / parallel agents
+- Multi-user coordination
+- Cloud execution
+- Autonomous task discovery beyond declared DAG
+- Fine-grained IDE plugins
+
+---
+
+## 9. Acceptance Criteria (Measurable)
+
+MVP is complete when:
+
+- State machine enforces workflow gating deterministically.
+- `aiw decompose` is refused unless in `CONSTRAINTS_APPROVED`.
+- `aiw go TASK-###` is refused unless in `PLANNED`.
+- Locked artifacts cannot be modified without change request + re-approval.
+- Execution loop terminates deterministically:
+  - PASS → `PLANNED`
+  - exhaustion → `BLOCKED`
+- Write scope and diff thresholds are enforced.
+- Task log and run trace are generated per run.
+
+---
+
+## 10. Technical Assumptions
+
+- Runs in a git repo.
+- Python 3.10+ available.
+- Codex CLI integration available locally.
+- Test command is deterministic and local.
+
+---
+
+## 11. Risks
+
+- Incomplete constraints lead to brittle execution.
+- AI drift without strict scope validation.
+- User frustration if state gating is unclear.
+
+---
+
+## 12. De-risk Strategy
+
+- Enforce hard constraints gate before decompose/go.
+- Enforce strict write scope and diff thresholds.
+- Deterministic crash recovery:
+  - stale EXECUTING → BLOCKED on startup.
+
+---
+
+## 13. MVP Milestones
+
+1) State machine + artifact locking
+2) Constraints gate enforcement
+3) Deterministic decompose outputs
+4) Bounded execution engine (Coder/Fixer)
+5) Logs + observability
+6) CLI/TUI polish

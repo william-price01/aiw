@@ -1,194 +1,237 @@
 project:
-  name: "aiw"
-  stack: "Python 3.10+; local CLI; Codex CLI integration; git"
-
-  layers:
-    - name: cli
-      allowed_imports:
-        - orchestrator
-        - workflow
-        - tasks
-        - infra
-
-    - name: orchestrator
-      allowed_imports:
-        - workflow
-        - tasks
-        - infra
-
-    - name: workflow
-      allowed_imports:
-        - tasks
-        - infra
-
-    - name: tasks
-      allowed_imports:
-        - infra
-
-    - name: infra
-      allowed_imports: []
-
-  boundaries:
-    locked_artifacts:
-      - "PRD.md"
-      - "SDD.md"
-      - "constraints.yml"
-      - "adrs/**"
-
-    change_request:
-      file: "CHANGE_REQUEST.md"
-      required_for_modifying_locked_artifacts: true
-      required_reapproval: true
-
-    do_not_touch_paths:
-      - ".aiw/**"
-
-    internal_tool_state_write_policy:
-      paths:
-        - ".aiw/**"
-      writer: "aiw_only"
-      coding_agents_must_not_write: true
-
-    allowed_edit_paths:
-      - "aiw/**"
-      - "tests/**"
-      - "tasks/**"
-
-    task_write_scope:
-      enforce: true
-      rule: "coding_agents_may_only_modify_files_in_current_task_allowlist"
-      reject_out_of_scope_changes: true
-      abort_on_excessive_diff: true
-
-  workflow:
-    state_file: ".aiw/workflow_state.json"
-    enforce_state_machine: true
-
-    states:
-      - "INIT"
-      - "PRD_DRAFT"
-      - "PRD_APPROVED"
-      - "SDD_DRAFT"
-      - "SDD_APPROVED"
-      - "PLANNED"
-      - "EXECUTING"
-      - "BLOCKED"
-
-    locked_when_approved:
-      - artifact: "PRD.md"
-        lock_state: "PRD_APPROVED"
-      - artifact: "SDD.md"
-        lock_state: "SDD_APPROVED"
-
-    allowed_commands_by_state:
-      INIT:
-        - "aiw init"
-        - "aiw prd"
-
-      PRD_DRAFT:
-        - "edit PRD.md"
-        - "aiw approve-prd"
-
-      PRD_APPROVED:
-        - "aiw sdd"
-        - "aiw request-change"
-
-      SDD_DRAFT:
-        - "edit SDD.md"
-        - "aiw approve-sdd"
-
-      SDD_APPROVED:
-        - "aiw decompose"
-        - "aiw request-change"
-
-      PLANNED:
-        - "aiw go TASK-###"
-
-      EXECUTING:
-        - "aiw undo"
-        - "aiw reset TASK-###"
-
-      BLOCKED:
-        - "aiw request-change"
-        - "aiw go TASK-###"
-
-    illegal_actions_must_fail_hard: true
-
-  agents:
-    task_scoped_coding_agents: true
-    one_task_per_agent_session: true
-    no_cross_task_edits_per_execution: true
-    task_id_pattern: "^TASK-[0-9]{3}$"
-
-    task_memory:
-      persistent_artifacts_only: true
-      per_task_capsule_log: "tasks/TASK-###.log.md"
-
-    global_artifacts:
-      - "PRD.md"
-      - "SDD.md"
-      - "adrs/**"
-      - "constraints.yml"
-      - "tasks/**"
-
-    allowed_context_inputs:
-      - "tasks/TASK-###.md"
-      - "tasks/TASK-###.log.md"
-      - "constraints.yml"
-      - "relevant_code_snippets"
-      - "relevant_diffs"
-      - "bounded_test_failure_excerpt"
-
-  codex_integration:
+  name: aiw
+  stack: Python 3.10+; local CLI; Codex CLI integration; git
+layers:
+- name: cli
+  allowed_imports:
+  - orchestrator
+  - workflow
+  - tasks
+  - infra
+- name: orchestrator
+  allowed_imports:
+  - workflow
+  - tasks
+  - infra
+- name: workflow
+  allowed_imports:
+  - tasks
+  - infra
+- name: tasks
+  allowed_imports:
+  - infra
+- name: infra
+  allowed_imports: []
+boundaries:
+  internal_tool_state:
+    paths:
+    - .aiw/**
+    writer: aiw_only
+    coding_agents_must_not_write: true
+  locked_artifacts:
+    always_locked: []
+    lock_after_state:
+    - artifact: docs/prd.md
+      state: PRD_APPROVED
+    - artifact: docs/sdd.md
+      state: SDD_APPROVED
+    - artifact: docs/adrs/**
+      state: ADRS_APPROVED
+    - artifact: docs/constraints.yml
+      state: CONSTRAINTS_APPROVED
+    immutable_during_execution:
+    - docs/tasks/DAG.md
+    - docs/tasks/DAG.yml
+    - docs/tasks/TASK-???.md
+  change_request:
+    file: docs/requests/CHANGE_REQUEST.md
+    required_for_modifying_locked_artifacts: true
+    requires_reapproval_transition:
+      PRD:
+        from_state: PRD_APPROVED
+        to_state: PRD_DRAFT
+        reapprove_command: aiw approve-prd
+      SDD:
+        from_state: SDD_APPROVED
+        to_state: SDD_DRAFT
+        reapprove_command: aiw approve-sdd
+      ADRS:
+        from_state: ADRS_APPROVED
+        to_state: ADRS_DRAFT
+        reapprove_command: aiw approve-adrs
+      CONSTRAINTS:
+        from_state: CONSTRAINTS_APPROVED
+        to_state: CONSTRAINTS_DRAFT
+        reapprove_command: aiw approve-constraints
+agents:
+  task_scoped_coding_agent:
+    enforced: true
+    task_id_regex: ^TASK-\d{3}$
+    no_cross_task_edits: true
+    memory:
+      type: markdown_capsule
+      path_template: docs/tasks/{TASK_ID}.log.md
+      append_only: true
+write_scope_validation:
+  enabled: true
+  allowed_edit_paths:
+  - aiw/**
+  - tests/**
+  - docs/tasks/**
+  forbid_paths:
+  - .aiw/**
+diff_validation:
+  enabled: true
+  max_files_changed: 30
+  max_lines_changed: 1500
+  hard_fail_on_exceed: true
+quality:
+  test_command: `pytest -q`
+  lint_command: `ruff check .`
+  typecheck_command: `mypy aiw tests` 
+observability:
+  traces:
+    required_events:
+    - state_transition
+    - constraint_validation
+    - scope_validation
+    - diff_threshold_check
+    - test_run_started
+    - test_run_failed
+    - test_run_passed
+    - fixer_spawned
+    - iteration_exhausted
+    - blocked
+    - run_complete
+    - quality_gate_failed
+    - lock_violation_hard_fail
+  artifacts:
+    jsonl_trace_path: .aiw/runs/run-<timestamp>.jsonl
+workflow:
+  state_file: .aiw/workflow_state.json
+  enforce_state_machine: true
+  illegal_actions_must_fail_hard: true
+  state_transitions_must_be_logged: true
+  states:
+  - INIT
+  - PRD_DRAFT
+  - PRD_APPROVED
+  - SDD_DRAFT
+  - SDD_APPROVED
+  - ADRS_DRAFT
+  - ADRS_APPROVED
+  - CONSTRAINTS_DRAFT
+  - CONSTRAINTS_APPROVED
+  - PLANNED
+  - EXECUTING
+  - BLOCKED
+  allowed_commands_by_state:
+    INIT:
+    - aiw init
+    - aiw prd
+    PRD_DRAFT:
+    - edit docs/prd.md
+    - aiw approve-prd
+    PRD_APPROVED:
+    - aiw sdd
+    - aiw request-change
+    SDD_DRAFT:
+    - edit docs/sdd.md
+    - aiw approve-sdd
+    SDD_APPROVED:
+    - aiw adrs
+    - aiw request-change
+    ADRS_DRAFT:
+    - edit docs/adrs/**
+    - aiw approve-adrs
+    ADRS_APPROVED:
+    - aiw constraints
+    - aiw request-change
+    CONSTRAINTS_DRAFT:
+    - edit docs/constraints.yml
+    - aiw approve-constraints
+    CONSTRAINTS_APPROVED:
+    - aiw decompose
+    - aiw request-change
+    PLANNED:
+    - aiw go TASK-###
+    - aiw request-change
+    EXECUTING:
+    - aiw undo
+    - aiw reset TASK-###
+    BLOCKED:
+    - aiw request-change
+  transitions:
+  - from: INIT
+    command: aiw prd
+    to: PRD_DRAFT
+  - from: PRD_DRAFT
+    command: aiw approve-prd
+    to: PRD_APPROVED
+  - from: PRD_APPROVED
+    command: aiw sdd
+    to: SDD_DRAFT
+  - from: SDD_DRAFT
+    command: aiw approve-sdd
+    to: SDD_APPROVED
+  - from: SDD_APPROVED
+    command: aiw adrs
+    to: ADRS_DRAFT
+  - from: ADRS_DRAFT
+    command: aiw approve-adrs
+    to: ADRS_APPROVED
+  - from: ADRS_APPROVED
+    command: aiw constraints
+    to: CONSTRAINTS_DRAFT
+  - from: CONSTRAINTS_DRAFT
+    command: aiw approve-constraints
+    to: CONSTRAINTS_APPROVED
+  - from: CONSTRAINTS_APPROVED
+    command: aiw decompose
+    to: PLANNED
+  - from: PLANNED
+    command: aiw go TASK-###
+    to: EXECUTING
+  - from: EXECUTING
+    on: success
+    to: PLANNED
+  - from: EXECUTING
+    on: exhaustion
+    to: BLOCKED
+  - from: EXECUTING
+    on: scope_violation_second
+    to: BLOCKED
+  - from: EXECUTING
+    on: oversized_split
+    to: BLOCKED
+  - from: EXECUTING
+    on: abort
+    to: PLANNED
+  - from: EXECUTING
+    on: stale_execution_detected
+    to: BLOCKED
+locking_rules:
+  enforce_command_level_validation: true
+  forbid_silent_edits_to_locked_artifacts: true
+  hard_fail_on_locked_artifact_modification_during_EXECUTING: true
+  locked_artifacts_checked_via_git_diff_name_only: true
+execution:
+  max_iterations_per_task: 3
+  constraints_finalization_gate:
+    enabled: true
+    required_non_placeholder_fields:
+    - quality.test_command
+    placeholder_values:
+    - TBD
+    - ''
+    refuse_commands:
+    - aiw decompose
+    - aiw go TASK-###
+  run_id:
     required: true
-    backend_contract: "unified_diff_only"
-
-    iterations:
-      max_iterations_per_task: 3
-      enforce_bounded_loop: true
-
-      on_exhaustion:
-        transition_state_to: "BLOCKED"
-        generate_blocker_report: true
-        blocker_report_path: "tasks/TASK-###/blocker_report.md"
-        append_summary_to_capsule_log: true
-
-  quality:
-    must_have:
-      - "tests added or updated for any new logic"
-      - "no large rewrites without an approved TASK"
-      - "run quality gates each iteration: lint, typecheck, tests"
-
-    lint: "TBD"
-    typecheck: "TBD"
-    test_command: "TBD"
-
-  security:
-    secrets_policy: "never hardcode secrets/keys/tokens"
-    logging_policy: "never log secrets"
-    authz_policy: "not_applicable_for_local_cli_unless_future_prd_says_otherwise"
-
-  performance:
-    constraints:
-      - "abort_if_cost_threshold_exceeded"
-      - "abort_if_token_bound_exceeded"
-      - "abort_if_runtime_bound_exceeded"
-
-  observability:
-    traces:
-      enabled: true
-      path: ".aiw/runs/run-<timestamp>.jsonl"
-      required_events:
-        - "agent_spawned"
-        - "patch_applied"
-        - "test_run"
-        - "test_failed"
-        - "fix_attempt"
-        - "blocker"
-
-    tui_tree_required: true
-    diff_summary_required: true
-
-    failure_excerpt:
-      required: true
-      bounded_length: "TBD"
+    write_on_enter_EXECUTING: true
+  stale_execution_policy:
+    enabled: true
+    on_detect_EXECUTING_at_startup:
+      transition_to: BLOCKED
+      emit_event: stale_execution_detected

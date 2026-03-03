@@ -1,0 +1,232 @@
+tasks:
+  - id: TASK-001
+    title: "Project scaffold and package layout"
+    type: IMPLEMENTATION
+    depends_on: []
+    filescope: ["aiw/__init__.py", "aiw/cli/", "aiw/orchestrator/", "aiw/workflow/", "aiw/tasks/", "aiw/infra/", "tests/", "pyproject.toml", "setup.cfg"]
+    tests: ["python -c 'import aiw'", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Package importable", "Layer directories exist", "Lint and typecheck pass"]
+
+  - id: TASK-002
+    title: "Workflow state machine (core)"
+    type: IMPLEMENTATION
+    depends_on: [TASK-001]
+    filescope: ["aiw/workflow/state_machine.py", "aiw/workflow/__init__.py", "tests/test_state_machine.py"]
+    tests: ["pytest tests/test_state_machine.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["All 12 states represented", "Valid transitions succeed", "Invalid transitions raise hard error", "State persisted to .aiw/workflow_state.json", "State read/write round-trips"]
+
+  - id: TASK-003
+    title: "Constraints loader and validator"
+    type: IMPLEMENTATION
+    depends_on: [TASK-001]
+    filescope: ["aiw/infra/constraints.py", "aiw/infra/__init__.py", "tests/test_constraints.py"]
+    tests: ["pytest tests/test_constraints.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Loads docs/constraints.yml", "Validates required fields present", "Rejects placeholder values", "Returns typed config object"]
+
+  - id: TASK-004
+    title: "Artifact locking engine"
+    type: IMPLEMENTATION
+    depends_on: [TASK-002]
+    filescope: ["aiw/workflow/locking.py", "tests/test_locking.py"]
+    tests: ["pytest tests/test_locking.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Locks artifacts after matching approval state", "Locks planning artifacts during EXECUTING", "Rejects writes to locked paths", "Uses git diff --name-only"]
+
+  - id: TASK-005
+    title: "aiw init command"
+    type: IMPLEMENTATION
+    depends_on: [TASK-002]
+    filescope: ["aiw/cli/init_cmd.py", "aiw/cli/__init__.py", "tests/test_init.py"]
+    tests: ["pytest tests/test_init.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Creates .aiw/ directory", "Creates workflow_state.json with state=INIT", "Creates .aiw/runs/", "Idempotent"]
+
+  - id: TASK-006
+    title: "Spec-phase draft commands (prd/sdd/adrs/constraints)"
+    type: IMPLEMENTATION
+    depends_on: [TASK-004, TASK-005]
+    filescope: ["aiw/cli/spec_cmds.py", "aiw/orchestrator/spec_phase.py", "aiw/orchestrator/__init__.py", "tests/test_spec_draft_cmds.py"]
+    tests: ["pytest tests/test_spec_draft_cmds.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["aiw prd: INIT->PRD_DRAFT", "aiw sdd: PRD_APPROVED->SDD_DRAFT", "aiw adrs: SDD_APPROVED->ADRS_DRAFT", "aiw constraints: ADRS_APPROVED->CONSTRAINTS_DRAFT", "Wrong state rejected"]
+
+  - id: TASK-025
+    title: "Spec-phase approve commands (approve-prd/sdd/adrs/constraints)"
+    type: IMPLEMENTATION
+    depends_on: [TASK-006]
+    filescope: ["aiw/cli/spec_cmds.py", "aiw/orchestrator/spec_phase.py", "tests/test_spec_approve_cmds.py"]
+    tests: ["pytest tests/test_spec_approve_cmds.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["aiw approve-prd: PRD_DRAFT->PRD_APPROVED + lock prd.md", "aiw approve-sdd: SDD_DRAFT->SDD_APPROVED + lock sdd.md", "aiw approve-adrs: ADRS_DRAFT->ADRS_APPROVED + lock adrs/**", "aiw approve-constraints: CONSTRAINTS_DRAFT->CONSTRAINTS_APPROVED + lock constraints.yml", "Wrong state rejected"]
+
+  - id: TASK-007
+    title: "Constraints finalization gate"
+    type: IMPLEMENTATION
+    depends_on: [TASK-003, TASK-025]
+    filescope: ["aiw/workflow/gates.py", "tests/test_gates.py"]
+    tests: ["pytest tests/test_gates.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Valid constraints pass gate", "Missing test_command fails", "Placeholder TBD/empty fails", "Emits constraint_validation_failed data on failure"]
+
+  - id: TASK-008
+    title: "Decompose orchestration and atomic write"
+    type: IMPLEMENTATION
+    depends_on: [TASK-007]
+    filescope: ["aiw/cli/decompose_cmd.py", "aiw/orchestrator/decompose.py", "tests/test_decompose_orchestration.py"]
+    tests: ["pytest tests/test_decompose_orchestration.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Refused unless state=CONSTRAINTS_APPROVED", "Passes constraints gate", "Atomic write: temp dir then rename", "On failure no partial artifacts", "Transitions CONSTRAINTS_APPROVED->PLANNED on success"]
+
+  - id: TASK-026
+    title: "Decompose AI session and output validation"
+    type: IMPLEMENTATION
+    depends_on: [TASK-008]
+    filescope: ["aiw/orchestrator/decompose.py", "aiw/orchestrator/decompose_validator.py", "tests/test_decompose_validation.py"]
+    tests: ["pytest tests/test_decompose_validation.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["AI session invoked with PCP context", "Output validated: DAG.md exists, DAG.yml valid YAML, TASK-###.md files present", "Invalid output rejected before atomic write", "Stub/mock AI session for tests"]
+
+  - id: TASK-009
+    title: "Task lint preflight gate"
+    type: IMPLEMENTATION
+    depends_on: [TASK-003, TASK-026]
+    filescope: ["aiw/tasks/lint.py", "aiw/tasks/__init__.py", "tests/test_task_lint.py"]
+    tests: ["pytest tests/test_task_lint.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Validates TASK-###.md exists", "Required fields present", "Scope consistent with constraints.yml", "Emits task_lint_failed on failure"]
+
+  - id: TASK-010
+    title: "Observability — JSONL trace emitter"
+    type: IMPLEMENTATION
+    depends_on: [TASK-002]
+    filescope: ["aiw/infra/trace.py", "tests/test_trace.py"]
+    tests: ["pytest tests/test_trace.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Writes valid JSONL", "All 12 required event types supported", "Each event has timestamp, event_type, run_id", "Append-only"]
+
+  - id: TASK-011
+    title: "Checkpointing (git-based)"
+    type: IMPLEMENTATION
+    depends_on: [TASK-002]
+    filescope: ["aiw/infra/checkpoint.py", "tests/test_checkpoint.py"]
+    tests: ["pytest tests/test_checkpoint.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Creates git commit checkpoint", "Checkpoint after each patch", "Revert restores working tree", "Deterministic refs"]
+
+  - id: TASK-012
+    title: "Write-scope and diff validation"
+    type: IMPLEMENTATION
+    depends_on: [TASK-003, TASK-004]
+    filescope: ["aiw/tasks/scope_validator.py", "tests/test_scope_validator.py"]
+    tests: ["pytest tests/test_scope_validator.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Validates against task allowlist", "Rejects .aiw/** writes", "Enforces max_files=30, max_lines=1500", "Hard-fail on exceed"]
+
+  - id: TASK-013
+    title: "Coder session integration"
+    type: IMPLEMENTATION
+    depends_on: [TASK-009, TASK-010, TASK-011, TASK-012]
+    filescope: ["aiw/orchestrator/coder.py", "tests/test_coder.py"]
+    tests: ["pytest tests/test_coder.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Spawns exactly one Codex CLI session", "Passes task spec as context", "Enforces file allowlist", "Returns PatchResult"]
+
+  - id: TASK-014
+    title: "Fixer session integration"
+    type: IMPLEMENTATION
+    depends_on: [TASK-013]
+    filescope: ["aiw/orchestrator/fixer.py", "tests/test_fixer.py"]
+    tests: ["pytest tests/test_fixer.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Spawned only after test failure", "At most one per run", "Same write scope as Coder", "Emits fixer_spawned data"]
+
+  - id: TASK-015
+    title: "Execution loop — happy path (Coder → PASS)"
+    type: IMPLEMENTATION
+    depends_on: [TASK-013, TASK-014]
+    filescope: ["aiw/orchestrator/executor.py", "aiw/cli/go_cmd.py", "tests/test_executor_happy.py"]
+    tests: ["pytest tests/test_executor_happy.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Refused unless state=PLANNED", "Generates run_id UUID", "Creates pre-task checkpoint", "Transitions PLANNED->EXECUTING", "Runs Coder->validate->test", "On PASS: transitions EXECUTING->PLANNED", "Emits state_transition, test_run_started, test_run_passed, run_complete"]
+
+  - id: TASK-027
+    title: "Execution loop — Fixer path, iteration cap, BLOCKED"
+    type: IMPLEMENTATION
+    depends_on: [TASK-015]
+    filescope: ["aiw/orchestrator/executor.py", "tests/test_executor_fixer.py"]
+    tests: ["pytest tests/test_executor_fixer.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["On test FAIL: spawns Fixer session", "Applies fix, re-runs tests", "Respects max_iterations=3", "On exhaustion: transitions EXECUTING->BLOCKED", "Emits test_run_failed, fixer_spawned, iteration_exhausted, blocked"]
+
+  - id: TASK-016
+    title: "Blocker report and BLOCKED transition"
+    type: IMPLEMENTATION
+    depends_on: [TASK-027]
+    filescope: ["aiw/orchestrator/blocker.py", "tests/test_blocker.py"]
+    tests: ["pytest tests/test_blocker.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Generates blocker_report.md on exhaustion", "Optional followup_tasks.md and scope_expansion_request.md", "Emits blocked trace event"]
+
+  - id: TASK-017
+    title: "Undo and reset commands"
+    type: IMPLEMENTATION
+    depends_on: [TASK-011, TASK-027]
+    filescope: ["aiw/cli/undo_cmd.py", "tests/test_undo_reset.py"]
+    tests: ["pytest tests/test_undo_reset.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["aiw undo reverts to most recent checkpoint", "aiw reset TASK-### reverts to baseline", "Both only during EXECUTING", "Deterministic git revert"]
+
+  - id: TASK-018
+    title: "Stale EXECUTING recovery"
+    type: IMPLEMENTATION
+    depends_on: [TASK-002, TASK-027]
+    filescope: ["aiw/workflow/recovery.py", "tests/test_recovery.py"]
+    tests: ["pytest tests/test_recovery.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["state=EXECUTING at startup -> BLOCKED", "Emits stale_execution_detected", "No automatic resume"]
+
+  - id: TASK-019
+    title: "Change request flow"
+    type: IMPLEMENTATION
+    depends_on: [TASK-004, TASK-025]
+    filescope: ["aiw/cli/change_request_cmd.py", "aiw/workflow/change_request.py", "tests/test_change_request.py"]
+    tests: ["pytest tests/test_change_request.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Creates CHANGE_REQUEST.md", "Contains target, reason, impact", "Re-approval transitions to DRAFT", "Allowed from approved/planned/blocked states"]
+
+  - id: TASK-020
+    title: "Capsule log writer (append-only)"
+    type: IMPLEMENTATION
+    depends_on: [TASK-027]
+    filescope: ["aiw/tasks/capsule_log.py", "tests/test_capsule_log.py"]
+    tests: ["pytest tests/test_capsule_log.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Writes TASK-###.log.md", "Contains task, constraints hash, diffs, tests, PASS/BLOCKED", "Append-only"]
+
+  - id: TASK-021
+    title: "CLI entry point — router and arg parsing"
+    type: IMPLEMENTATION
+    depends_on: [TASK-005, TASK-025, TASK-007, TASK-026, TASK-027, TASK-017, TASK-019]
+    filescope: ["aiw/cli/main.py", "aiw/cli/__init__.py", "tests/test_cli_router.py"]
+    tests: ["pytest tests/test_cli_router.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Single aiw entry point", "All 14 commands routable", "Help text for all commands", "Exit codes: 0 success, 1 error"]
+
+  - id: TASK-028
+    title: "CLI entry point — state validation and stale check"
+    type: IMPLEMENTATION
+    depends_on: [TASK-021, TASK-018]
+    filescope: ["aiw/cli/main.py", "tests/test_cli_state.py"]
+    tests: ["pytest tests/test_cli_state.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Invalid command in current state exits code 1", "Stale EXECUTING detected on startup", "State validation before every dispatch"]
+
+  - id: TASK-022
+    title: "Layer import boundary enforcement"
+    type: IMPLEMENTATION
+    depends_on: [TASK-003]
+    filescope: ["aiw/infra/layer_check.py", "tests/test_layer_check.py"]
+    tests: ["pytest tests/test_layer_check.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Validates imports against layer definitions", "Detects violations", "Reports structured list"]
+
+  - id: TASK-023
+    title: "Integration tests — happy path"
+    type: TESTING
+    depends_on: [TASK-028]
+    filescope: ["tests/integration/test_happy_path.py", "tests/integration/__init__.py", "tests/conftest.py"]
+    tests: ["pytest tests/integration/test_happy_path.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["End-to-end: init->prd->approve->sdd->approve->adrs->approve->constraints->approve->decompose->go->PASS->PLANNED", "Trace events emitted correctly"]
+
+  - id: TASK-029
+    title: "Integration tests — error and BLOCKED paths"
+    type: TESTING
+    depends_on: [TASK-023]
+    filescope: ["tests/integration/test_error_paths.py", "tests/conftest.py"]
+    tests: ["pytest tests/integration/test_error_paths.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Exhaustion -> BLOCKED with blocker report", "Invalid state transitions rejected at every stage", "Locked artifact modification rejected", "Diff threshold exceeded rejected", "Stale EXECUTING recovery"]
+
+  - id: TASK-024
+    title: "TUI rendering model"
+    type: IMPLEMENTATION
+    depends_on: [TASK-028]
+    filescope: ["aiw/cli/tui.py", "tests/test_tui.py"]
+    tests: ["pytest tests/test_tui.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["Derives display from workflow_state.json", "Shows task artifacts and status", "Shows run trace events", "No speculative UI state", "Read-only"]
