@@ -1,2 +1,0 @@
-[console_scripts]
-aiw = aiw.cli.main:main
