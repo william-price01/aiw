@@ -64,6 +64,7 @@ AIW MVP must support:
   - generate `docs/tasks/TASK-###.md` task specs
 - Deterministic logging:
   - per-task capsule log
+  - task completion tracker (`docs/tasks/COMPLETED.md`)
   - structured JSONL run trace
 
 User-authored authoritative artifacts:
@@ -165,6 +166,7 @@ Locks apply **after** approval states.
   - `docs/tasks/DAG.md`
   - `docs/tasks/DAG.yml`
   - `docs/tasks/TASK-???.md`
+- During `EXECUTING`, `docs/tasks/COMPLETED.md` is writable in append-only mode to record completed tasks.
 
 Silent edits to locked artifacts are prohibited.
 
@@ -243,6 +245,7 @@ No concurrency.
 6. Run deterministic local tests.
 7. If tests PASS:
    - Update task log.
+   - Append task completion record to `docs/tasks/COMPLETED.md`.
    - Transition to `PLANNED`.
    - Terminate.
 8. If tests FAIL:
@@ -279,6 +282,7 @@ Execution artifacts are authoritative, deterministic, and append-only where appl
 
 - Task spec: `docs/tasks/TASK-###.md`
 - Task capsule log (append-only): `docs/tasks/TASK-###.log.md`
+- Task completion tracker (append-only): `docs/tasks/COMPLETED.md`
 - Structured run trace: `.aiw/runs/run-<timestamp>.jsonl`
 - Workflow state: `.aiw/workflow_state.json`
 
@@ -289,6 +293,8 @@ Task capsule log contains:
 - applied diffs summaries per iteration
 - test results per iteration
 - PASS or BLOCKED termination
+
+Task completion tracker contains one append-only record per PASSed task run with task ID, run ID, completion timestamp, and result.
 
 Git diff is the source of truth for code changes.
 
@@ -351,6 +357,7 @@ MVP is complete when:
   - exhaustion → `BLOCKED`
 - Write scope and diff thresholds are enforced.
 - Task log and run trace are generated per run.
+- Completed tasks are recorded in `docs/tasks/COMPLETED.md` on PASS.
 
 ---
 

@@ -43,6 +43,8 @@ boundaries:
     - docs/tasks/DAG.md
     - docs/tasks/DAG.yml
     - docs/tasks/TASK-???.md
+    mutable_during_execution_append_only:
+    - docs/tasks/COMPLETED.md
   change_request:
     file: docs/requests/CHANGE_REQUEST.md
     required_for_modifying_locked_artifacts: true
@@ -103,6 +105,7 @@ observability:
     - iteration_exhausted
     - blocked
     - run_complete
+    - task_marked_complete
     - quality_gate_failed
     - lock_violation_hard_fail
   artifacts:
@@ -217,6 +220,11 @@ locking_rules:
   locked_artifacts_checked_via_git_diff_name_only: true
 execution:
   max_iterations_per_task: 3
+  task_completion:
+    enabled: true
+    tracker_file: docs/tasks/COMPLETED.md
+    append_only: true
+    mark_on_pass: true
   constraints_finalization_gate:
     enabled: true
     required_non_placeholder_fields:

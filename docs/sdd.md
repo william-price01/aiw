@@ -50,6 +50,7 @@ User-authored artifacts live in `docs/`:
 * `docs/constraints.yml`
 * `docs/adrs/`
 * `docs/tasks/`
+* `docs/tasks/COMPLETED.md` (append-only task completion tracker)
 
 Reports live in:
 
@@ -265,6 +266,7 @@ During `EXECUTING`, planning artifacts are immutable:
 * `docs/tasks/DAG.md`
 * `docs/tasks/DAG.yml`
 * `docs/tasks/TASK-???.md`
+* `docs/tasks/COMPLETED.md` is explicitly writable in append-only mode for completion marks.
 
 Any attempt to modify locked artifacts causes:
 
@@ -340,6 +342,7 @@ Within `EXECUTING`:
 5. If PASS:
 
    * Log result
+   * Append completion record to `docs/tasks/COMPLETED.md`
    * Transition to `PLANNED`
 6. If FAIL:
 
@@ -521,4 +524,3 @@ Stale `EXECUTING` state transitions to `BLOCKED` on startup.
 ## ADR-012: Hard Constraints Gate
 
 `docs/constraints.yml` and execution gates must validate before `decompose` or `go`.
-
