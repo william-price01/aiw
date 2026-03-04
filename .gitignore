@@ -8,6 +8,7 @@ __pycache__/
 aiw.egg-info/
 dist/
 build/
+scratch.txt
 
 # Virtualenv
 .venv/
