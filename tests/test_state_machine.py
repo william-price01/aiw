@@ -69,13 +69,11 @@ def test_transition_table_matches_spec_cases() -> None:
     assert len(TRANSITIONS) == len(ALL_TRANSITIONS)
 
 
-
 def test_invalid_transition_raises_hard_failure() -> None:
     machine = WorkflowStateMachine(current_state="INIT")
 
     with pytest.raises(IllegalStateTransitionError):
         machine.transition("aiw sdd")
-
 
 
 def test_state_round_trip_json(tmp_path: Path) -> None:
@@ -86,7 +84,6 @@ def test_state_round_trip_json(tmp_path: Path) -> None:
     reloaded = WorkflowStateMachine.load(state_path)
 
     assert reloaded.current_state == "PLANNED"
-
 
 
 def test_load_missing_state_file_defaults_to_init(tmp_path: Path) -> None:

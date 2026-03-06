@@ -32,8 +32,9 @@ def test_get_locked_paths_after_approval_states_include_expected_artifacts(
     assert expected_locked_path in get_locked_paths(state)
 
 
-def test_get_locked_paths_during_executing_include_immutable_planning_artifacts(
-) -> None:
+def test_get_locked_paths_during_executing_include_immutable_planning_artifacts() -> (
+    None
+):
     locked = get_locked_paths("EXECUTING")
 
     assert "docs/tasks/DAG.md" in locked
