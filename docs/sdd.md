@@ -130,18 +130,25 @@ AIW permits AI assistance across both spec-phase and execution-phase, with disti
 
 Applies to:
 
-* PRD
-* SDD
-* ADRs
-* constraints
-* decomposition planning
+* `PRD_DRAFT`
+* `SDD_DRAFT`
+* `ADRS_DRAFT`
+* `CONSTRAINTS_DRAFT`
 
 Rules:
 
-* Each spec-phase command may spawn **one bounded AI session**, scoped to the single target artifact (or deterministic output set).
-* Spec-phase AI is **single-pass**.
-* No bounded patch → test → fix loop.
-* No iterative correction cycles.
+* Entering a spec-phase DRAFT state establishes exactly one active editable artifact:
+  * `PRD_DRAFT` → `docs/prd.md`
+  * `SDD_DRAFT` → `docs/sdd.md`
+  * `ADRS_DRAFT` → `docs/adrs/**`
+  * `CONSTRAINTS_DRAFT` → `docs/constraints.yml`
+* Spec-phase drafting is conversational and iterative.
+* The human and AI may revise the active artifact across multiple turns.
+* Iteration continues until the human explicitly approves the active artifact.
+* The AI must not modify artifacts outside the active draft scope.
+* There is no automatic approval.
+* There is no automatic transition to the next phase.
+* Spec-phase drafting does not use the execution-phase bounded patch → validate → test → fix loop.
 
 ---
 
@@ -414,15 +421,18 @@ quality_gate_failed
 
 # 12. Backend Integration
 
-AIW integrates with Codex CLI in a bounded manner:
+AIW integrates with Codex CLI in a bounded manner appropriate to each phase:
 
-* One Codex session per phase invocation
+* Spec-phase draft commands may invoke AI repeatedly across the active DRAFT session, but only within the active artifact scope defined by workflow state.
+* `aiw decompose` may use one bounded AI invocation to produce deterministic planning outputs.
+* `aiw go TASK-###` uses the execution-phase session model:
+  * Exactly one Coder session
+  * At most one Fixer session
 * No streaming orchestration threads
 * No autonomous agent loops
 
-Codex output is treated as a patch proposal.
-Git diff is authoritative.
-
+Codex output is treated as a proposed artifact revision or patch, depending on phase.
+Git diff is authoritative for code changes.
 ---
 
 # 13. Checkpointing / Undo / Reset

@@ -193,7 +193,15 @@ State transitions reflect re-approval.
 
 - All phases (PRD, SDD, ADRs, constraints, decompose, execution) may be AI-assisted.
 - The state machine enforces **structure and gating**, not authorship.
-- Spec-phase AI (PRD/SDD/ADRs/constraints) is single-pass and artifact-scoped (generate or revise the target artifact only).
+- Spec-phase drafting applies to the DRAFT states: `PRD_DRAFT`, `SDD_DRAFT`, `ADRS_DRAFT`, and `CONSTRAINTS_DRAFT`.
+- In a DRAFT state, the human and AI may iterate conversationally on the active artifact across multiple turns until the human explicitly approves.
+- During spec drafting, the AI may modify only the artifact mapped to the active DRAFT state:
+  - `PRD_DRAFT` → `docs/prd.md`
+  - `SDD_DRAFT` → `docs/sdd.md`
+  - `ADRS_DRAFT` → `docs/adrs/**`
+  - `CONSTRAINTS_DRAFT` → `docs/constraints.yml`
+- Approval is human-driven only. There is no automatic approval and no automatic transition to the next phase.
+- `aiw decompose` is AI-assisted but is not a conversational DRAFT state; it is a deterministic planning command allowed only from `CONSTRAINTS_APPROVED`.
 - Execution-phase AI uses bounded iterative sessions (Coder + optional Fixer) under strict iteration and write-scope enforcement.
 
 ## 6. Task Selection vs Task Execution
