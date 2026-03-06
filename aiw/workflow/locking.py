@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Final
 
 from aiw.infra import ConstraintsConfig, load_constraints
-from aiw.workflow.state_machine import WORKFLOW_STATES
 
 CONSTRAINTS_PATH: Final[Path] = Path("docs/constraints.yml")
 GIT_DIFF_NAME_ONLY_COMMAND: Final[tuple[str, str, str]] = (
@@ -16,9 +15,6 @@ GIT_DIFF_NAME_ONLY_COMMAND: Final[tuple[str, str, str]] = (
     "diff",
     "--name-only",
 )
-STATE_INDEX: Final[dict[str, int]] = {
-    state: index for index, state in enumerate(WORKFLOW_STATES)
-}
 
 
 class LockViolationError(RuntimeError):
@@ -44,7 +40,9 @@ def get_locked_paths(state: str) -> set[str]:
             locked_paths.add(lock_rule.artifact)
 
     if state == "EXECUTING":
-        locked_paths.update(config.boundaries.locked_artifacts.immutable_during_execution)
+        locked_paths.update(
+            config.boundaries.locked_artifacts.immutable_during_execution
+        )
 
     return locked_paths
 
@@ -118,12 +116,20 @@ def _load_constraints() -> ConstraintsConfig:
 
 
 def _validate_state(state: str) -> None:
-    if state not in STATE_INDEX:
+    workflow_states = _load_constraints().workflow.states
+    if state not in workflow_states:
         raise ValueError(f"Unknown workflow state: {state}")
 
 
 def _is_state_at_or_after(state: str, threshold_state: str) -> bool:
-    return STATE_INDEX[state] >= STATE_INDEX[threshold_state]
+    workflow_states = _load_constraints().workflow.states
+    try:
+        return workflow_states.index(state) >= workflow_states.index(threshold_state)
+    except ValueError as exc:
+        raise ValueError(
+            f"""Unknown workflow state ordering comparison: 
+            {state!r} vs {threshold_state!r}"""
+        ) from exc
 
 
 def _normalize_path(path: str) -> str:
