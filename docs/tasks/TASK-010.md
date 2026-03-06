@@ -42,7 +42,7 @@ Non-goals:
 
 Acceptance criteria (measurable):
 - Writes valid JSONL to `.aiw/runs/run-<timestamp>.jsonl`.
-- All 12 required event types can be emitted.
+- All 14 required event types can be emitted.
 - Each line parses as valid JSON.
 - Each event has `timestamp`, `event_type`, `run_id`.
 - File is append-only.
