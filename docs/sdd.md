@@ -279,7 +279,7 @@ Any attempt to modify locked artifacts causes:
 
 * Immediate hard-fail
 * Revert to last checkpoint
-* Emit `LOCK_VIOLATION_HARD_FAIL`
+* Emit `lock_violation_hard_fail`
 * Abort run
 
 Workflow state remains unchanged unless explicitly transitioned.
@@ -346,11 +346,13 @@ Within `EXECUTING`:
 
    * Apply patch
 4. Run deterministic tests.
-5. If PASS:
 
+5. If PASS:
    * Log result
    * Append completion record to `docs/tasks/COMPLETED.md`
+   * Emit `task_marked_complete`
    * Transition to `PLANNED`
+
 6. If FAIL:
 
    * Spawn Fixer session
@@ -418,6 +420,27 @@ quality_gate_failed
 ```
 
 ---
+
+## 11.1 Core Required Trace Events
+
+Core required trace events for MVP are:
+
+- state_transition
+- constraint_validation
+- scope_validation
+- diff_threshold_check
+- test_run_started
+- test_run_failed
+- test_run_passed
+- fixer_spawned
+- iteration_exhausted
+- blocked
+- run_complete
+- task_marked_complete
+- quality_gate_failed
+- lock_violation_hard_fail
+
+Other sections may define additional conditional emitted events for specific failure paths. Those do not change the core required trace-event set unless they are also added to `docs/prd.md` and `docs/constraints.yml`.
 
 # 12. Backend Integration
 
