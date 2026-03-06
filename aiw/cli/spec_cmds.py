@@ -4,7 +4,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from aiw.orchestrator import SpecDraftSession, enter_spec_draft
+from aiw.orchestrator.spec_phase import (
+    SpecApprovalResult,
+    SpecDraftSession,
+    approve_spec_artifact,
+    enter_spec_draft,
+)
 
 
 def prd(root: Path) -> SpecDraftSession:
@@ -25,3 +30,23 @@ def adrs(root: Path) -> SpecDraftSession:
 def constraints(root: Path) -> SpecDraftSession:
     """Enter constraints drafting."""
     return enter_spec_draft(root, "aiw constraints")
+
+
+def approve_prd(root: Path) -> SpecApprovalResult:
+    """Approve the PRD and lock it."""
+    return approve_spec_artifact(root, "aiw approve-prd")
+
+
+def approve_sdd(root: Path) -> SpecApprovalResult:
+    """Approve the SDD and lock it."""
+    return approve_spec_artifact(root, "aiw approve-sdd")
+
+
+def approve_adrs(root: Path) -> SpecApprovalResult:
+    """Approve ADRs and lock them."""
+    return approve_spec_artifact(root, "aiw approve-adrs")
+
+
+def approve_constraints(root: Path) -> SpecApprovalResult:
+    """Approve constraints and lock them."""
+    return approve_spec_artifact(root, "aiw approve-constraints")
