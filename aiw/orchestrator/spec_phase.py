@@ -9,13 +9,23 @@ from pathlib import Path
 from typing import Final
 
 from aiw.infra import ConstraintsConfig, load_constraints
-from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
+from aiw.workflow import (
+    IllegalStateTransitionError,
+    WorkflowStateMachine,
+)
+from aiw.workflow.locking import get_locked_paths
 
 COMMAND_TO_ARTIFACT_SCOPE: Final[dict[str, str]] = {
     "aiw prd": "docs/prd.md",
     "aiw sdd": "docs/sdd.md",
     "aiw adrs": "docs/adrs/**",
     "aiw constraints": "docs/constraints.yml",
+}
+APPROVE_COMMAND_TO_ARTIFACT: Final[dict[str, str]] = {
+    "aiw approve-prd": "docs/prd.md",
+    "aiw approve-sdd": "docs/sdd.md",
+    "aiw approve-adrs": "docs/adrs/**",
+    "aiw approve-constraints": "docs/constraints.yml",
 }
 
 
@@ -48,6 +58,17 @@ class SpecDraftSession:
         return self.root / _normalize_relpath(self.root, path)
 
 
+@dataclass(frozen=True)
+class SpecApprovalResult:
+    """Spec artifact approval result with resulting lock state."""
+
+    root: Path
+    state: str
+    command: str
+    approved_artifact: str
+    locked_paths: frozenset[str]
+
+
 def enter_spec_draft(root: Path, command: str) -> SpecDraftSession:
     """Transition into a spec-phase DRAFT state and return the active scope."""
     constraints_path = root / "docs" / "constraints.yml"
@@ -68,11 +89,39 @@ def enter_spec_draft(root: Path, command: str) -> SpecDraftSession:
     )
 
 
+def approve_spec_artifact(root: Path, command: str) -> SpecApprovalResult:
+    """Transition a draft artifact to approved and return the resulting locks."""
+    constraints_path = root / "docs" / "constraints.yml"
+    config = load_constraints(constraints_path)
+    state_path = root / config.workflow.state_file
+    current_state = _read_current_state(state_path)
+    _ensure_command_allowed(config, current_state, command)
+
+    machine = WorkflowStateMachine(current_state=current_state)
+    next_state = machine.transition(command)
+    _write_current_state(state_path, next_state)
+
+    return SpecApprovalResult(
+        root=root,
+        state=next_state,
+        command=command,
+        approved_artifact=_approved_artifact_for_command(command),
+        locked_paths=frozenset(get_locked_paths(next_state)),
+    )
+
+
 def _artifact_scope_for_command(command: str) -> str:
     try:
         return COMMAND_TO_ARTIFACT_SCOPE[command]
     except KeyError as exc:
         raise ValueError(f"Unsupported spec draft command: {command}") from exc
+
+
+def _approved_artifact_for_command(command: str) -> str:
+    try:
+        return APPROVE_COMMAND_TO_ARTIFACT[command]
+    except KeyError as exc:
+        raise ValueError(f"Unsupported spec approve command: {command}") from exc
 
 
 def _ensure_command_allowed(
