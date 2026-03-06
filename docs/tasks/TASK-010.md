@@ -34,7 +34,7 @@ Interfaces/contracts:
 - Append-only within a run.
 
 Constraints enforced:
-- `observability.traces.required_events` (all 12 event types supported)
+- `observability.traces.required_events` (all 14 event types supported)
 - `observability.artifacts.jsonl_trace_path`
 
 Non-goals:
@@ -42,7 +42,7 @@ Non-goals:
 
 Acceptance criteria (measurable):
 - Writes valid JSONL to `.aiw/runs/run-<timestamp>.jsonl`.
-- All 12 required event types can be emitted.
+- All 14 required event types can be emitted.
 - Each line parses as valid JSON.
 - Each event has `timestamp`, `event_type`, `run_id`.
 - File is append-only.

@@ -325,18 +325,20 @@ Git diff is the source of truth for code changes.
 - Structured run log:
   - `.aiw/runs/run-<timestamp>.jsonl`
 - Required trace events:
-  - state_transition
-  - constraint_validation
-  - scope_validation
-  - diff_threshold_check
-  - test_run_started
-  - test_run_failed
-  - test_run_passed
-  - fixer_spawned
-  - iteration_exhausted
-  - quality_gate_failed
-  - blocked
-  - run_complete
+    - state_transition
+    - constraint_validation
+    - scope_validation
+    - diff_threshold_check
+    - test_run_started
+    - test_run_failed
+    - test_run_passed
+    - fixer_spawned
+    - iteration_exhausted
+    - blocked
+    - run_complete
+    - task_marked_complete
+    - quality_gate_failed
+    - lock_violation_hard_fail
 
 ---
 
