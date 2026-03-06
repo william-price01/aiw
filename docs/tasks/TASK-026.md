@@ -4,11 +4,12 @@ Type: IMPLEMENTATION
 Depends_on: [TASK-008]
 
 Objective:
-Implement the AI session invocation for decomposition (single-pass, PCP as context) and the output validator that checks generated artifacts before atomic write.
+Implement the bounded AI invocation for decomposition (PCP as context) and the output validator that checks generated artifacts before atomic write.
 
 Context (spec refs):
-- PRD §4 (deterministic decomposition outputs)
-- SDD §4.1 (spec-phase AI — single-pass, artifact-scoped)
+- PRD §4 (deterministic decomposition outputs), §5.5 (AI mediation across phases)
+- SDD §5.1 (CONSTRAINTS_APPROVED → PLANNED transition)
+- SDD §12 (backend integration)
 
 Inputs:
 - PCP documents (docs/prd.md, docs/sdd.md, docs/adrs/**, docs/constraints.yml)
@@ -36,9 +37,11 @@ Interfaces/contracts:
   - At least one TASK-###.md file.
   - Each TASK file has required fields (per TASK template).
 - Invalid output causes decompose to abort (no atomic write).
+- Decompose may use one bounded AI invocation with PCP context, but it is not a conversational DRAFT-state workflow.
 
 Constraints enforced:
-- Spec-phase AI is single-pass (SDD §4.1).
+- Decompose is deterministic and non-conversational.
+- Invalid output must abort before atomic write.
 
 Non-goals:
 - No orchestration logic (done in TASK-008).
