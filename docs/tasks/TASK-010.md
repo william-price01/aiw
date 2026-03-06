@@ -34,7 +34,7 @@ Interfaces/contracts:
 - Append-only within a run.
 
 Constraints enforced:
-- `observability.traces.required_events` (all 12 event types supported)
+- `observability.traces.required_events` (all 14 event types supported)
 - `observability.artifacts.jsonl_trace_path`
 
 Non-goals:
