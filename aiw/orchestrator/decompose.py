@@ -5,14 +5,17 @@ from __future__ import annotations
 import json
 import shutil
 import tempfile
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 from aiw.infra import ConstraintsConfig, load_constraints
+from aiw.orchestrator.decompose_validator import validate_decompose_output
 from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
 from aiw.workflow.gates import check_constraints_gate
 
 RawDecomposeOutput = dict[str, str]
+DecomposeSessionRunner = Callable[["PcpPaths", str], RawDecomposeOutput]
 
 
 @dataclass(frozen=True)
@@ -29,12 +32,29 @@ class DecomposeOutputError(RuntimeError):
     """Raised when the decompose session returns unusable output."""
 
 
-def invoke_decompose_session(root: Path) -> RawDecomposeOutput:
-    """Invoke the bounded decompose session.
+class PcpPaths(dict[str, Path]):
+    """Mapping of authoritative PCP artifact paths for the decompose session."""
 
-    TASK-026 extends this stub with the actual AI-backed implementation.
-    """
-    raise NotImplementedError("decompose session invocation is implemented in TASK-026")
+    def __init__(self, root: Path, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)
+        self.root = root
+
+    def as_posix(self) -> str:
+        """Compatibility shim for existing single-argument test doubles."""
+        return self.root.as_posix()
+
+
+_DECOMPOSE_SYSTEM_PROMPT = (
+    "Generate deterministic planning artifacts for AIW decompose. "
+    "Return a mapping of relative docs/tasks paths to full file contents. "
+    "The output must include DAG.md, DAG.yml, and at least one TASK-###.md file."
+)
+
+
+def invoke_decompose_session(pcp_paths: PcpPaths) -> RawDecomposeOutput:
+    """Invoke one bounded decompose session with PCP context."""
+    prompt = _build_decompose_prompt(pcp_paths)
+    return _run_bounded_decompose_ai_session(pcp_paths, prompt)
 
 
 def run_decompose(root: Path) -> DecomposeResult:
@@ -45,7 +65,12 @@ def run_decompose(root: Path) -> DecomposeResult:
     _ensure_command_allowed(config, current_state, "aiw decompose")
     check_constraints_gate(config)
 
-    output = invoke_decompose_session(root)
+    output = invoke_decompose_session(_build_pcp_paths(root))
+    validation_errors = validate_decompose_output(output)
+    if validation_errors:
+        raise DecomposeOutputError(
+            "invalid decompose output: " + "; ".join(validation_errors)
+        )
     written_files = _write_outputs_atomically(root, output)
 
     machine = WorkflowStateMachine(current_state=current_state)
@@ -68,6 +93,43 @@ def _ensure_command_allowed(
         raise IllegalStateTransitionError(
             f"Illegal transition from {current_state!r} with {command!r}"
         )
+
+
+def _build_pcp_paths(root: Path) -> PcpPaths:
+    docs_root = root / "docs"
+    pcp_paths = PcpPaths(
+        root,
+        {
+            "docs/prd.md": docs_root / "prd.md",
+            "docs/sdd.md": docs_root / "sdd.md",
+            "docs/constraints.yml": docs_root / "constraints.yml",
+        },
+    )
+
+    for adr_path in sorted((docs_root / "adrs").rglob("*")):
+        if adr_path.is_file():
+            pcp_paths[adr_path.relative_to(root).as_posix()] = adr_path
+
+    return pcp_paths
+
+
+def _build_decompose_prompt(pcp_paths: PcpPaths) -> str:
+    sections = [_DECOMPOSE_SYSTEM_PROMPT]
+    for relative_path, path in sorted(pcp_paths.items()):
+        sections.append(f"\n[{relative_path}]")
+        sections.append(path.read_text(encoding="utf-8"))
+    return "\n".join(sections)
+
+
+def _run_bounded_decompose_ai_session(
+    pcp_paths: PcpPaths,
+    prompt: str,
+) -> RawDecomposeOutput:
+    raise NotImplementedError(
+        "bounded decompose AI session is not configured; "
+        f"received PCP context for {len(pcp_paths)} artifact(s) "
+        f"and prompt length {len(prompt)}"
+    )
 
 
 def _write_outputs_atomically(root: Path, output: RawDecomposeOutput) -> list[str]:
