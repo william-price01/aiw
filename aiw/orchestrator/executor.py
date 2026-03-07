@@ -22,6 +22,7 @@ from aiw.orchestrator.fixer import build_fixer_spawned_event_data, run_fixer_ses
 from aiw.tasks.lint import check_task_lint
 from aiw.workflow import WorkflowStateMachine
 from aiw.workflow.gates import check_constraints_gate
+from aiw.workflow.locking import LockViolationError, check_lock_violations
 
 PatchRunner = Callable[[TaskSpec, ConstraintsConfig], PatchResult]
 FixerRunner = Callable[[TaskSpec, str, ConstraintsConfig], PatchResult]
@@ -221,6 +222,19 @@ def _emit_patch_validation_events(
     phase: str,
     patch_result: PatchResult,
 ) -> None:
+    violations = check_lock_violations("EXECUTING", list(patch_result.changed_files))
+    if violations:
+        error = LockViolationError(violations)
+        trace.emit(
+            "lock_violation_hard_fail",
+            {
+                "task_id": task_id,
+                "phase": phase,
+                "violations": list(error.violations),
+            },
+        )
+        raise ExecutionError(str(error))
+
     trace.emit(
         "scope_validation",
         {
