@@ -51,15 +51,28 @@ class IllegalStateTransitionError(RuntimeError):
 class WorkflowStateMachine:
     """Finite state machine for the global AIW workflow."""
 
-    def __init__(self, current_state: str = "INIT") -> None:
+    def __init__(
+        self,
+        current_state: str = "INIT",
+        metadata: dict[str, object] | None = None,
+    ) -> None:
         if current_state not in WORKFLOW_STATES:
             raise ValueError(f"Unknown workflow state: {current_state}")
         self._current_state = current_state
+        self._metadata: dict[str, object] = dict(metadata) if metadata else {}
 
     @property
     def current_state(self) -> str:
         """Return current workflow state."""
         return self._current_state
+
+    def set_metadata(self, key: str, value: object) -> None:
+        """Set a metadata key on the state machine."""
+        self._metadata[key] = value
+
+    def get_metadata(self, key: str, default: object = None) -> object:
+        """Retrieve a metadata value by key."""
+        return self._metadata.get(key, default)
 
     def transition(self, command: str) -> str:
         """Apply a transition by command/event, returning the resulting state."""
@@ -89,12 +102,16 @@ class WorkflowStateMachine:
         current_state = data.get("current_state")
         if not isinstance(current_state, str):
             raise ValueError("workflow state file missing string field 'current_state'")
-        return cls(current_state=current_state)
+        raw_metadata = data.get("metadata")
+        metadata = dict(raw_metadata) if isinstance(raw_metadata, dict) else {}
+        return cls(current_state=current_state, metadata=metadata)
 
     def save(self, path: Path) -> None:
         """Persist current workflow state to a JSON file."""
         path.parent.mkdir(parents=True, exist_ok=True)
-        payload = {"current_state": self._current_state}
+        payload: dict[str, object] = {"current_state": self._current_state}
+        if self._metadata:
+            payload["metadata"] = dict(self._metadata)
         path.write_text(
             json.dumps(payload, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",

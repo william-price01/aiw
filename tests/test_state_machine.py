@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -92,3 +93,94 @@ def test_load_missing_state_file_defaults_to_init(tmp_path: Path) -> None:
     machine = WorkflowStateMachine.load(state_path)
 
     assert machine.current_state == "INIT"
+
+
+def test_metadata_round_trip_in_memory() -> None:
+    machine = WorkflowStateMachine(metadata={"run_id": "abc"})
+
+    assert machine.get_metadata("run_id") == "abc"
+
+    machine.set_metadata("run_id", "xyz")
+
+    assert machine.get_metadata("run_id") == "xyz"
+
+
+def test_save_includes_metadata_when_non_empty(tmp_path: Path) -> None:
+    state_path = tmp_path / ".aiw" / "workflow_state.json"
+    machine = WorkflowStateMachine(
+        current_state="EXECUTING",
+        metadata={"run_id": "abc"},
+    )
+
+    machine.save(state_path)
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload == {
+        "current_state": "EXECUTING",
+        "metadata": {"run_id": "abc"},
+    }
+
+
+def test_save_omits_metadata_when_empty(tmp_path: Path) -> None:
+    state_path = tmp_path / ".aiw" / "workflow_state.json"
+    machine = WorkflowStateMachine(current_state="PLANNED")
+
+    machine.save(state_path)
+
+    payload = json.loads(state_path.read_text(encoding="utf-8"))
+    assert payload == {"current_state": "PLANNED"}
+    assert "metadata" not in payload
+
+
+def test_load_deserializes_metadata(tmp_path: Path) -> None:
+    state_path = tmp_path / ".aiw" / "workflow_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {"current_state": "EXECUTING", "metadata": {"run_id": "abc"}},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    machine = WorkflowStateMachine.load(state_path)
+
+    assert machine.current_state == "EXECUTING"
+    assert machine.get_metadata("run_id") == "abc"
+
+
+def test_load_without_metadata_defaults_to_empty_metadata(tmp_path: Path) -> None:
+    state_path = tmp_path / ".aiw" / "workflow_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps({"current_state": "PLANNED"}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+    machine = WorkflowStateMachine.load(state_path)
+
+    assert machine.current_state == "PLANNED"
+    assert machine.get_metadata("run_id") is None
+
+
+def test_load_with_non_dict_metadata_falls_back_to_empty_metadata(
+    tmp_path: Path,
+) -> None:
+    state_path = tmp_path / ".aiw" / "workflow_state.json"
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(
+            {"current_state": "EXECUTING", "metadata": "abc"},
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    machine = WorkflowStateMachine.load(state_path)
+
+    assert machine.current_state == "EXECUTING"
+    assert machine.get_metadata("run_id") is None
