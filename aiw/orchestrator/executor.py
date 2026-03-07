@@ -1,7 +1,6 @@
 """Bounded task execution loop for AIW task runs."""
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import shutil
@@ -17,7 +16,12 @@ from aiw.infra import ConstraintsConfig, load_constraints
 from aiw.infra.checkpoint import create_checkpoint
 from aiw.infra.trace import TraceEmitter
 from aiw.orchestrator.blocker import BlockerContext, generate_blocker_report
-from aiw.orchestrator.coder import PatchResult, TaskSpec, run_coder_session
+from aiw.orchestrator.coder import (
+    PatchResult,
+    PatchValidationError,
+    TaskSpec,
+    run_coder_session,
+)
 from aiw.orchestrator.fixer import build_fixer_spawned_event_data, run_fixer_session
 from aiw.tasks.lint import check_task_lint
 from aiw.workflow import WorkflowStateMachine
@@ -86,7 +90,6 @@ def execute_task(
         trace,
         "aiw go TASK-###",
         run_id=run_id,
-        write_run_id=constraints.execution.run_id.write_on_enter_executing,
     )
 
     with _pushd(repo_root):
@@ -96,7 +99,19 @@ def execute_task(
     run_fixer = fixer_runner or _default_fixer_runner(repo_root)
     apply_patch = patch_applier or _apply_patch
 
-    coder_patch = run_coder(task_spec, constraints)
+    try:
+        coder_patch = run_coder(task_spec, constraints)
+    except PatchValidationError as exc:
+        return _finalize_patch_validation_failure(
+            machine=machine,
+            state_path=state_path,
+            trace=trace,
+            task_id=task_id,
+            run_id=run_id,
+            phase="coder",
+            detail=str(exc),
+            iterations_used=1,
+        )
     _emit_patch_validation_events(trace, task_id, "coder", coder_patch)
     apply_patch(coder_patch.patch, repo_root)
 
@@ -131,7 +146,19 @@ def execute_task(
         build_fixer_spawned_event_data(task_spec, initial_test.output, constraints),
     )
 
-    fixer_patch = run_fixer(task_spec, initial_test.output, constraints)
+    try:
+        fixer_patch = run_fixer(task_spec, initial_test.output, constraints)
+    except PatchValidationError as exc:
+        return _finalize_patch_validation_failure(
+            machine=machine,
+            state_path=state_path,
+            trace=trace,
+            task_id=task_id,
+            run_id=run_id,
+            phase="fixer",
+            detail=str(exc),
+            iterations_used=2,
+        )
     _emit_patch_validation_events(trace, task_id, "fixer", fixer_patch)
     apply_patch(fixer_patch.patch, repo_root)
 
@@ -347,6 +374,58 @@ def _finalize_pass(
     )
 
 
+def _finalize_patch_validation_failure(
+    *,
+    machine: WorkflowStateMachine,
+    state_path: Path,
+    trace: TraceEmitter,
+    task_id: str,
+    run_id: str,
+    phase: str,
+    detail: str,
+    iterations_used: int,
+) -> ExecutionResult:
+    trace.emit(
+        "scope_validation",
+        {
+            "task_id": task_id,
+            "phase": phase,
+            "status": "failed",
+            "detail": detail,
+        },
+    )
+    trace.emit(
+        "diff_threshold_check",
+        {
+            "task_id": task_id,
+            "phase": phase,
+            "status": "failed",
+            "detail": detail,
+        },
+    )
+    _transition(machine, state_path, trace, "on:exhaustion", run_id=run_id)
+    trace.emit(
+        "blocked",
+        {
+            "task_id": task_id,
+            "reason": "patch_validation_failed",
+        },
+    )
+    trace.emit(
+        "run_complete",
+        {
+            "task_id": task_id,
+            "status": "BLOCKED",
+            "iterations_used": iterations_used,
+        },
+    )
+    return ExecutionResult(
+        status="BLOCKED",
+        iterations_used=iterations_used,
+        run_id=run_id,
+    )
+
+
 def _append_task_completion(
     constraints: ConstraintsConfig,
     repo_root: Path,
@@ -376,40 +455,14 @@ def _transition(
     command: str,
     *,
     run_id: str,
-    write_run_id: bool = False,
 ) -> None:
     from_state = machine.current_state
     to_state = machine.transition(command)
-    _save_workflow_state(state_path, to_state, run_id if write_run_id else None)
+    machine.set_metadata("run_id", run_id)
+    machine.save(state_path)
     trace.emit(
         "state_transition",
         {"from_state": from_state, "to_state": to_state, "trigger": command},
-    )
-
-
-def _save_workflow_state(
-    state_path: Path,
-    current_state: str,
-    run_id: str | None,
-) -> None:
-    payload: dict[str, str] = {}
-    if state_path.exists():
-        existing_payload = json.loads(state_path.read_text(encoding="utf-8"))
-        if isinstance(existing_payload, dict):
-            payload = {
-                key: value
-                for key, value in existing_payload.items()
-                if isinstance(key, str) and isinstance(value, str)
-            }
-
-    payload["current_state"] = current_state
-    if run_id is not None:
-        payload["run_id"] = run_id
-
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import subprocess
 from pathlib import Path
+from typing import cast
 from uuid import UUID
 
 import pytest
@@ -28,7 +29,7 @@ def test_go_refuses_unless_state_is_planned(tmp_path: Path) -> None:
 
     state = _read_workflow_state(repo_root)
     assert state["state"] == "CONSTRAINTS_APPROVED"
-    assert "run_id" not in state
+    assert "metadata" not in state
 
 
 def test_go_executes_happy_path_and_marks_completion(
@@ -78,9 +79,9 @@ def test_go_executes_happy_path_and_marks_completion(
 
     assert checkpoint_calls == ["TASK-015 baseline"]
     state = _read_workflow_state(repo_root)
-    assert state["state"] == "PLANNED"
     assert state["current_state"] == "PLANNED"
-    assert state["run_id"] == result.run_id
+    metadata = cast(dict[str, str], state["metadata"])
+    assert metadata["run_id"] == result.run_id
 
     completed = (repo_root / "docs" / "tasks" / "COMPLETED.md").read_text(
         encoding="utf-8"
@@ -202,10 +203,9 @@ def _write_workflow_state(repo_root: Path, state: str) -> None:
     )
 
 
-def _read_workflow_state(repo_root: Path) -> dict[str, str]:
+def _read_workflow_state(repo_root: Path) -> dict[str, object]:
     state_path = repo_root / ".aiw" / "workflow_state.json"
-    data = json.loads(state_path.read_text(encoding="utf-8"))
-    return {key: str(value) for key, value in data.items()}
+    return cast(dict[str, object], json.loads(state_path.read_text(encoding="utf-8")))
 
 
 def _patch_result() -> PatchResult:

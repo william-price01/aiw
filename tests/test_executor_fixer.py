@@ -7,7 +7,12 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
-from aiw.orchestrator.coder import DiffStats, PatchResult, TaskSpec
+from aiw.orchestrator.coder import (
+    DiffStats,
+    PatchResult,
+    PatchValidationError,
+    TaskSpec,
+)
 from aiw.orchestrator.executor import execute_task
 
 
@@ -110,6 +115,135 @@ def test_execute_task_blocks_after_failed_fixer_with_iteration_exhaustion(
     assert "iteration_exhausted" in event_types
     assert "blocked" in event_types
     assert event_types[-1] == "run_complete"
+
+
+def test_execute_task_blocks_when_coder_patch_validation_fails(
+    tmp_path: Path,
+) -> None:
+    repo_root = _init_repo(tmp_path)
+
+    def coder_runner(task_spec: TaskSpec, constraints: object) -> PatchResult:
+        del task_spec, constraints
+        raise PatchValidationError(
+            scope_violations=["aiw/forbidden.py"],
+            diff_violations=[],
+        )
+
+    result = execute_task(
+        "TASK-027",
+        repo_root,
+        coder_runner=coder_runner,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.iterations_used == 1
+    assert _state_payload(repo_root)["current_state"] == "BLOCKED"
+
+    events = _trace_events(repo_root)
+    scope_event = _event(events, "scope_validation")
+    assert scope_event["payload"] == {
+        "task_id": "TASK-027",
+        "phase": "coder",
+        "status": "failed",
+        "detail": (
+            "Invalid coder patch proposal: "
+            "scope violations: aiw/forbidden.py"
+        ),
+    }
+    diff_event = _event(events, "diff_threshold_check")
+    assert diff_event["payload"] == {
+        "task_id": "TASK-027",
+        "phase": "coder",
+        "status": "failed",
+        "detail": (
+            "Invalid coder patch proposal: "
+            "scope violations: aiw/forbidden.py"
+        ),
+    }
+    blocked_event = _event(events, "blocked")
+    assert blocked_event["payload"] == {
+        "task_id": "TASK-027",
+        "reason": "patch_validation_failed",
+    }
+    run_complete_event = _event(events, "run_complete")
+    assert run_complete_event["payload"] == {
+        "task_id": "TASK-027",
+        "status": "BLOCKED",
+        "iterations_used": 1,
+    }
+    event_types = [event["event_type"] for event in events]
+    assert event_types.index("scope_validation") < event_types.index("blocked")
+
+
+def test_execute_task_blocks_when_fixer_patch_validation_fails(
+    tmp_path: Path,
+) -> None:
+    repo_root = _init_repo(tmp_path)
+
+    def coder_runner(task_spec: TaskSpec, constraints: object) -> PatchResult:
+        del task_spec, constraints
+        return _patch_result(
+            "aiw/example.py",
+            "VALUE = 1\n",
+            "VALUE = 0\n",
+        )
+
+    def fixer_runner(
+        task_spec: TaskSpec,
+        test_output: str,
+        constraints: object,
+    ) -> PatchResult:
+        del task_spec, test_output, constraints
+        raise PatchValidationError(
+            scope_violations=[],
+            diff_violations=["lines_changed 200 exceeds 100"],
+        )
+
+    result = execute_task(
+        "TASK-027",
+        repo_root,
+        coder_runner=coder_runner,
+        fixer_runner=fixer_runner,
+    )
+
+    assert result.status == "BLOCKED"
+    assert result.iterations_used == 2
+    assert _state_payload(repo_root)["current_state"] == "BLOCKED"
+
+    events = _trace_events(repo_root)
+    scope_event = _event(events, "scope_validation", phase="fixer")
+    assert scope_event["payload"] == {
+        "task_id": "TASK-027",
+        "phase": "fixer",
+        "status": "failed",
+        "detail": (
+            "Invalid coder patch proposal: "
+            "diff violations: lines_changed 200 exceeds 100"
+        ),
+    }
+    diff_event = _event(events, "diff_threshold_check", phase="fixer")
+    assert diff_event["payload"] == {
+        "task_id": "TASK-027",
+        "phase": "fixer",
+        "status": "failed",
+        "detail": (
+            "Invalid coder patch proposal: "
+            "diff violations: lines_changed 200 exceeds 100"
+        ),
+    }
+    blocked_event = _event(events, "blocked")
+    assert blocked_event["payload"] == {
+        "task_id": "TASK-027",
+        "reason": "patch_validation_failed",
+    }
+    run_complete_event = _event(events, "run_complete")
+    assert run_complete_event["payload"] == {
+        "task_id": "TASK-027",
+        "status": "BLOCKED",
+        "iterations_used": 2,
+    }
+    event_types = [event["event_type"] for event in events]
+    assert event_types.index("scope_validation") < event_types.index("blocked")
 
 
 def _init_repo(tmp_path: Path) -> Path:
@@ -235,9 +369,31 @@ def _state_payload(repo_root: Path) -> dict[str, str]:
 
 
 def _trace_event_types(repo_root: Path) -> list[str]:
+    return [cast(str, event["event_type"]) for event in _trace_events(repo_root)]
+
+
+def _trace_events(repo_root: Path) -> list[dict[str, object]]:
     run_files = sorted((repo_root / ".aiw" / "runs").glob("*.jsonl"))
     assert run_files
     return [
-        json.loads(line)["event_type"]
+        cast(dict[str, object], json.loads(line))
         for line in run_files[0].read_text(encoding="utf-8").splitlines()
     ]
+
+
+def _event(
+    events: list[dict[str, object]],
+    event_type: str,
+    *,
+    phase: str | None = None,
+) -> dict[str, object]:
+    for event in events:
+        if event.get("event_type") != event_type:
+            continue
+        payload = event.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if phase is not None and payload.get("phase") != phase:
+            continue
+        return event
+    raise AssertionError(f"missing trace event: {event_type!r} phase={phase!r}")
