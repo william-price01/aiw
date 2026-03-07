@@ -18,7 +18,7 @@ from aiw.infra.trace import TraceEmitter
 from aiw.orchestrator.coder import PatchResult, TaskSpec, run_coder_session
 from aiw.orchestrator.fixer import build_fixer_spawned_event_data, run_fixer_session
 from aiw.tasks.lint import check_task_lint
-from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
+from aiw.workflow import WorkflowStateMachine
 from aiw.workflow.gates import check_constraints_gate
 
 PatchRunner = Callable[[TaskSpec, ConstraintsConfig], PatchResult]
@@ -109,7 +109,12 @@ def execute_task(
     )
     trace.emit(
         "quality_gate_failed",
-        {"task_id": task_id, "gate": "tests", "iteration": 1, "exit_code": initial_test.exit_code},
+        {
+            "task_id": task_id,
+            "gate": "tests",
+            "iteration": 1,
+            "exit_code": initial_test.exit_code,
+        },
     )
     trace.emit(
         "fixer_spawned",
@@ -139,7 +144,12 @@ def execute_task(
     )
     trace.emit(
         "quality_gate_failed",
-        {"task_id": task_id, "gate": "tests", "iteration": 2, "exit_code": fixed_test.exit_code},
+        {
+            "task_id": task_id,
+            "gate": "tests",
+            "iteration": 2,
+            "exit_code": fixed_test.exit_code,
+        },
     )
     trace.emit(
         "iteration_exhausted",
@@ -254,7 +264,11 @@ def _run_tests(
     if completed.returncode == 0:
         trace.emit(
             "test_run_passed",
-            {"task_id": task_id, "iteration": iteration, "exit_code": completed.returncode},
+            {
+                "task_id": task_id,
+                "iteration": iteration,
+                "exit_code": completed.returncode,
+            },
         )
 
     return TestRunResult(
@@ -296,7 +310,11 @@ def _finalize_pass(
         "run_complete",
         {"task_id": task_id, "status": "PASS", "iterations_used": iterations_used},
     )
-    return ExecutionResult(status="PASS", iterations_used=iterations_used, run_id=run_id)
+    return ExecutionResult(
+        status="PASS",
+        iterations_used=iterations_used,
+        run_id=run_id,
+    )
 
 
 def _append_task_completion(
