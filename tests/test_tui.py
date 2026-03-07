@@ -11,7 +11,11 @@ def test_render_status_reads_persisted_workflow_state(tmp_path: Path) -> None:
     state_path.parent.mkdir(parents=True)
     state_path.write_text(
         json.dumps(
-            {"current_state": "PLANNED", "run_id": "run-123", "state": "PLANNED"},
+            {
+                "current_state": "PLANNED",
+                "metadata": {"run_id": "run-123"},
+                "state": "PLANNED",
+            },
             indent=2,
             sort_keys=True,
         )
@@ -26,6 +30,25 @@ def test_render_status_reads_persisted_workflow_state(tmp_path: Path) -> None:
             "Workflow Status",
             "State: PLANNED",
             "Run ID: run-123",
+            "Source: .aiw/workflow_state.json",
+        ]
+    )
+
+
+def test_render_status_omits_run_id_when_metadata_is_missing(tmp_path: Path) -> None:
+    state_path = tmp_path / ".aiw" / "workflow_state.json"
+    state_path.parent.mkdir(parents=True)
+    state_path.write_text(
+        json.dumps({"current_state": "PLANNED", "state": "PLANNED"}, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    rendered = render_status(tmp_path)
+
+    assert rendered == "\n".join(
+        [
+            "Workflow Status",
+            "State: PLANNED",
             "Source: .aiw/workflow_state.json",
         ]
     )
