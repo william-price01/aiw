@@ -1,0 +1,200 @@
+"""Tests for happy-path task execution orchestration."""
+
+from __future__ import annotations
+
+import json
+import subprocess
+from pathlib import Path
+from uuid import UUID
+
+import pytest
+
+from aiw.cli.go_cmd import go
+from aiw.cli.init_cmd import init_project
+from aiw.orchestrator.coder import DiffStats, PatchResult
+from aiw.workflow import IllegalStateTransitionError
+from aiw.workflow.gates import GIT_ACCESS_COMMAND
+
+
+def test_go_refuses_unless_state_is_planned(tmp_path: Path) -> None:
+    repo_root = _init_repo(tmp_path)
+    _write_workflow_state(repo_root, "CONSTRAINTS_APPROVED")
+
+    with pytest.raises(IllegalStateTransitionError):
+        go(repo_root, "TASK-015")
+
+    state = _read_workflow_state(repo_root)
+    assert state["state"] == "CONSTRAINTS_APPROVED"
+    assert "run_id" not in state
+
+
+def test_go_executes_happy_path_and_marks_completion(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = _init_repo(tmp_path)
+    _write_workflow_state(repo_root, "PLANNED")
+    checkpoint_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "aiw.workflow.gates.subprocess.run",
+        _successful_git_gate_run,
+    )
+    
+    def fake_create_checkpoint(label: str) -> str:
+        checkpoint_calls.append(label)
+        return "checkpoint-ref-123"
+
+    def fake_run_coder_session(
+        task_spec: object,
+        constraints: object,
+        repo_root: Path | None = None,
+        codex_runner: object | None = None,
+    ) -> PatchResult:
+        del task_spec, constraints, repo_root, codex_runner
+        return _patch_result()
+
+    monkeypatch.setattr(
+        "aiw.orchestrator.executor.create_checkpoint",
+        fake_create_checkpoint,
+    )
+    monkeypatch.setattr(
+        "aiw.orchestrator.executor.run_coder_session",
+        fake_run_coder_session,
+    )
+    monkeypatch.setattr(
+        "aiw.orchestrator.executor.subprocess.run",
+        _successful_executor_run,
+    )
+
+    result = go(repo_root, "TASK-015")
+
+    assert result.status == "PASS"
+    assert result.iterations_used == 1
+    UUID(result.run_id)
+
+    assert checkpoint_calls == ["TASK-015 baseline"]
+    state = _read_workflow_state(repo_root)
+    assert state["state"] == "PLANNED"
+    assert state["current_state"] == "PLANNED"
+    assert state["run_id"] == result.run_id
+
+    completed = (repo_root / "docs" / "tasks" / "COMPLETED.md").read_text(
+        encoding="utf-8"
+    )
+    assert (
+        f"| TASK-015 | {result.run_id} |" in completed
+        and "| PASS | Completed by aiw go |" in completed
+    )
+
+    trace_path = next((repo_root / ".aiw" / "runs").glob("*.jsonl"))
+    events = [
+        json.loads(line)
+        for line in trace_path.read_text(encoding="utf-8").splitlines()
+        if line.strip()
+    ]
+    event_types = [event["event_type"] for event in events]
+    assert "state_transition" in event_types
+    assert "test_run_started" in event_types
+    assert "test_run_passed" in event_types
+    assert "task_marked_complete" in event_types
+    assert "run_complete" in event_types
+    assert all(event["run_id"] == result.run_id for event in events)
+
+
+def _init_repo(tmp_path: Path) -> Path:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    init_project(repo_root)
+
+    docs_dir = repo_root / "docs"
+    tasks_dir = docs_dir / "tasks"
+    tasks_dir.mkdir(parents=True)
+    (docs_dir / "constraints.yml").write_text(
+        Path("docs/constraints.yml").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (tasks_dir / "COMPLETED.md").write_text(
+        Path("docs/tasks/COMPLETED.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    (tasks_dir / "TASK-015.md").write_text(
+        Path("docs/tasks/TASK-015.md").read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+    return repo_root
+
+
+def _write_workflow_state(repo_root: Path, state: str) -> None:
+    state_path = repo_root / ".aiw" / "workflow_state.json"
+    state_path.write_text(
+        json.dumps({"state": state}, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
+
+
+def _read_workflow_state(repo_root: Path) -> dict[str, str]:
+    state_path = repo_root / ".aiw" / "workflow_state.json"
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    return {key: str(value) for key, value in data.items()}
+
+
+def _patch_result() -> PatchResult:
+    return PatchResult(
+        changed_files=("aiw/orchestrator/executor.py",),
+        diff_stats=DiffStats(files_changed=1, lines_changed=12),
+        success=True,
+        patch="",
+    )
+
+
+def _successful_git_gate_run(
+    command: list[str] | tuple[str, ...],
+    *,
+    check: bool,
+    capture_output: bool,
+    text: bool,
+    cwd: Path | None = None,
+    input: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    assert tuple(command) == GIT_ACCESS_COMMAND
+    assert check is True
+    assert capture_output is True
+    assert text is True
+    assert cwd is None
+    assert input is None
+    return subprocess.CompletedProcess(args=command, returncode=0, stdout="/tmp/repo\n")
+
+
+def _successful_executor_run(
+    command: list[str] | tuple[str, ...],
+    *,
+    check: bool,
+    capture_output: bool,
+    text: bool,
+    cwd: Path | None = None,
+    input: str | None = None,
+) -> subprocess.CompletedProcess[str]:
+    assert check is True
+    assert capture_output is True
+    assert text is True
+    if tuple(command) == GIT_ACCESS_COMMAND:
+        assert cwd is None
+        assert input is None
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="/tmp/repo\n",
+        )
+    if tuple(command) == ("pytest", "-q"):
+        assert cwd is not None
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="passed\n",
+        )
+    if tuple(command) == ("git", "apply", "--whitespace=nowarn", "-"):
+        assert cwd is not None
+        return subprocess.CompletedProcess(args=command, returncode=0, stdout="")
+    raise AssertionError(f"unexpected subprocess command: {command!r}")
