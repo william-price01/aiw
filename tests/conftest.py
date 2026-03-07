@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,6 +21,49 @@ class HappyPathRepo:
 
     root: Path
     checkpoint_calls: list[str]
+
+
+@dataclass
+class IntegrationRepo:
+    """Isolated repository plus helpers for integration error-path tests."""
+
+    root: Path
+    task_id: str
+
+    def read_state(self) -> dict[str, Any]:
+        payload = json.loads(
+            (self.root / ".aiw" / "workflow_state.json").read_text(encoding="utf-8")
+        )
+        if not isinstance(payload, dict):
+            raise AssertionError("workflow state payload must be a JSON object")
+        return payload
+
+    def write_state(
+        self,
+        state: str,
+        *,
+        metadata: dict[str, object] | None = None,
+    ) -> None:
+        payload: dict[str, object] = {
+            "current_state": state,
+            "state": state,
+        }
+        if metadata is not None:
+            payload["metadata"] = metadata
+        (self.root / ".aiw" / "workflow_state.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+
+    def read_trace_events(self) -> list[dict[str, Any]]:
+        trace_paths = sorted((self.root / ".aiw" / "runs").glob("*.jsonl"))
+        if not trace_paths:
+            return []
+        return [
+            json.loads(line)
+            for line in trace_paths[-1].read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
 
 @pytest.fixture
@@ -78,6 +123,135 @@ def happy_path_repo(
     )
 
     return HappyPathRepo(root=repo_root, checkpoint_calls=checkpoint_calls)
+
+
+@pytest.fixture
+def integration_repo_factory(tmp_path: Path) -> Any:
+    """Create isolated git repos for integration tests with minimal AIW fixtures."""
+
+    repo_index = 0
+
+    def create(
+        *,
+        state: str = "PLANNED",
+        task_id: str = "TASK-001",
+        task_allowlist: list[str] | None = None,
+        test_command: str = "pytest -q",
+    ) -> IntegrationRepo:
+        nonlocal repo_index
+        repo_index += 1
+
+        repo_root = tmp_path / f"repo-{repo_index}"
+        repo_root.mkdir()
+        subprocess.run(
+            ("git", "init"),
+            check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.name", "AIW Tests"),
+            check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ("git", "config", "user.email", "aiw-tests@example.com"),
+            check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+
+        init_project(repo_root)
+
+        docs_dir = repo_root / "docs"
+        tasks_dir = docs_dir / "tasks"
+        tasks_dir.mkdir(parents=True, exist_ok=True)
+
+        constraints_text = Path("docs/constraints.yml").read_text(encoding="utf-8")
+        constraints_text = constraints_text.replace(
+            "  test_command: `pytest -q`",
+            f'  test_command: "{test_command}"',
+            1,
+        )
+        (docs_dir / "constraints.yml").write_text(
+            constraints_text,
+            encoding="utf-8",
+        )
+        (docs_dir / "prd.md").write_text("# PRD\n\nIntegration test fixture.\n")
+        (docs_dir / "sdd.md").write_text("# SDD\n\nIntegration test fixture.\n")
+        (docs_dir / "adrs").mkdir(parents=True, exist_ok=True)
+        (docs_dir / "adrs" / "ADR-001-test.md").write_text(
+            "# ADR-001\n\nIntegration test fixture.\n",
+            encoding="utf-8",
+        )
+        (tasks_dir / "COMPLETED.md").write_text("# Completed\n", encoding="utf-8")
+        (tasks_dir / "DAG.md").write_text("# DAG\n", encoding="utf-8")
+        (tasks_dir / "DAG.yml").write_text("tasks: []\n", encoding="utf-8")
+
+        allowlist = task_allowlist or ["aiw/example.py", "tests/test_example.py"]
+        (tasks_dir / f"{task_id}.md").write_text(
+            "\n".join(
+                [
+                    f"## {task_id}: Integration error fixture",
+                    "",
+                    "Type: IMPLEMENTATION",
+                    "Depends_on: []",
+                    "",
+                    "Objective:",
+                    "Exercise integration error paths.",
+                    "",
+                    "File scope allowlist:",
+                    *[f"- {path}" for path in allowlist],
+                    "",
+                    "Non-goals:",
+                    "- No unrelated edits.",
+                    "",
+                    "Acceptance criteria (measurable):",
+                    "- Error path is exercised.",
+                    "",
+                    "Tests / checks required:",
+                    f"- {test_command}",
+                    "",
+                ]
+            ),
+            encoding="utf-8",
+        )
+
+        (repo_root / "aiw").mkdir(exist_ok=True)
+        (repo_root / "aiw" / "__init__.py").write_text("", encoding="utf-8")
+        (repo_root / "aiw" / "example.py").write_text("VALUE = 1\n", encoding="utf-8")
+        (repo_root / "tests").mkdir(exist_ok=True)
+        (repo_root / "tests" / "test_example.py").write_text(
+            "from aiw.example import VALUE\n\n\n"
+            "def test_value() -> None:\n"
+            "    assert VALUE == 1\n",
+            encoding="utf-8",
+        )
+
+        subprocess.run(
+            ("git", "add", "."),
+            check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+        subprocess.run(
+            ("git", "commit", "-m", "baseline"),
+            check=True,
+            cwd=repo_root,
+            capture_output=True,
+            text=True,
+        )
+
+        repo = IntegrationRepo(root=repo_root, task_id=task_id)
+        repo.write_state(state)
+        return repo
+
+    return create
 
 
 def _fake_run_coder_session(
