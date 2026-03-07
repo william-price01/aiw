@@ -98,6 +98,12 @@ def test_execute_task_blocks_after_failed_fixer_with_iteration_exhaustion(
     assert result.iterations_used == 3
     assert len(fixer_calls) == 1
     assert _state_payload(repo_root)["current_state"] == "BLOCKED"
+    report_path = repo_root / "docs" / "reports" / "TASK-027_blocker_report.md"
+    assert report_path.exists()
+    report_contents = report_path.read_text(encoding="utf-8")
+    assert "- Task ID: TASK-027" in report_contents
+    assert "- Iterations used: 3" in report_contents
+    assert "assert VALUE == 2" in report_contents
 
     event_types = _trace_event_types(repo_root)
     assert event_types.count("fixer_spawned") == 1
