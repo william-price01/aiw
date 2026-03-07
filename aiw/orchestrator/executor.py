@@ -1,6 +1,7 @@
 """Bounded task execution loop for AIW task runs."""
 from __future__ import annotations
 
+import json
 import os
 import shlex
 import shutil
@@ -15,6 +16,7 @@ from uuid import uuid4
 from aiw.infra import ConstraintsConfig, load_constraints
 from aiw.infra.checkpoint import create_checkpoint
 from aiw.infra.trace import TraceEmitter
+from aiw.orchestrator.blocker import BlockerContext, generate_blocker_report
 from aiw.orchestrator.coder import PatchResult, TaskSpec, run_coder_session
 from aiw.orchestrator.fixer import build_fixer_spawned_event_data, run_fixer_session
 from aiw.tasks.lint import check_task_lint
@@ -77,7 +79,14 @@ def execute_task(
     trace = TraceEmitter(run_id, _trace_path(repo_root, constraints))
     trace.emit("constraint_validation", {"task_id": task_id, "status": "passed"})
 
-    _transition(machine, state_path, trace, "aiw go TASK-###", run_id=run_id)
+    _transition(
+        machine,
+        state_path,
+        trace,
+        "aiw go TASK-###",
+        run_id=run_id,
+        write_run_id=constraints.execution.run_id.write_on_enter_executing,
+    )
 
     with _pushd(repo_root):
         create_checkpoint(f"{task_id} baseline")
@@ -160,6 +169,13 @@ def execute_task(
         },
     )
     _transition(machine, state_path, trace, "on:exhaustion", run_id=run_id)
+    blocker_context = BlockerContext(
+        root=repo_root,
+        iterations_used=constraints.execution.max_iterations_per_task,
+        last_test_output=fixed_test.output,
+        failure_reason="iteration_exhausted",
+    )
+    generate_blocker_report(task_id, blocker_context)
     trace.emit(
         "blocked",
         {
@@ -346,13 +362,40 @@ def _transition(
     command: str,
     *,
     run_id: str,
+    write_run_id: bool = False,
 ) -> None:
     from_state = machine.current_state
     to_state = machine.transition(command)
-    machine.save(state_path)
+    _save_workflow_state(state_path, to_state, run_id if write_run_id else None)
     trace.emit(
         "state_transition",
         {"from_state": from_state, "to_state": to_state, "trigger": command},
+    )
+
+
+def _save_workflow_state(
+    state_path: Path,
+    current_state: str,
+    run_id: str | None,
+) -> None:
+    payload: dict[str, str] = {}
+    if state_path.exists():
+        existing_payload = json.loads(state_path.read_text(encoding="utf-8"))
+        if isinstance(existing_payload, dict):
+            payload = {
+                key: value
+                for key, value in existing_payload.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
+
+    payload["current_state"] = current_state
+    if run_id is not None:
+        payload["run_id"] = run_id
+
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
 
