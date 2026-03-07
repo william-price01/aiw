@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import json
 import logging
 import os
 import subprocess
+import sys
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
 from pathlib import Path
@@ -25,10 +27,13 @@ from aiw.cli.spec_cmds import (
     prd,
     sdd,
 )
+from aiw.infra import ConstraintsConfig, load_constraints
 from aiw.infra.checkpoint import get_baseline_ref, revert_to_checkpoint
+from aiw.workflow.recovery import check_stale_execution, recover_stale_execution
 
 LOGGER: Final[logging.Logger] = logging.getLogger(__name__)
 DispatchHandler = Callable[[argparse.Namespace, Path], None]
+TASK_PLACEHOLDER: Final[str] = "TASK-###"
 
 
 class _ArgumentParser(argparse.ArgumentParser):
@@ -50,6 +55,17 @@ def main(argv: Sequence[str] | None = None, root: Path | None = None) -> int:
         return exc.code if isinstance(exc.code, int) else 1
 
     repo_root = root if root is not None else Path.cwd()
+    constraints = _load_repo_constraints(repo_root)
+    if constraints is not None:
+        stale_exit_code = _handle_stale_execution(repo_root, constraints)
+        if stale_exit_code is not None:
+            return stale_exit_code
+
+        validation_error = _validate_command_allowed(parsed, repo_root, constraints)
+        if validation_error is not None:
+            print(validation_error, file=sys.stderr)
+            return 1
+
     handler = _dispatch_table()[parsed.command]
     LOGGER.info("command_dispatch command=%s", parsed.command)
     handler(parsed, repo_root)
@@ -213,6 +229,84 @@ def _dispatch_request_change(args: argparse.Namespace, root: Path) -> None:
         reason=args.reason,
         impact=args.impact,
     )
+
+
+def _load_repo_constraints(root: Path) -> ConstraintsConfig | None:
+    constraints_path = root / "docs" / "constraints.yml"
+    if not constraints_path.exists():
+        return None
+    return load_constraints(constraints_path)
+
+
+def _handle_stale_execution(root: Path, constraints: ConstraintsConfig) -> int | None:
+    state_path = root / constraints.workflow.state_file
+    if not state_path.exists():
+        return None
+    if not check_stale_execution(state_path):
+        return None
+
+    recover_stale_execution(state_path)
+    message = (
+        "stale EXECUTING state detected; transitioned workflow to BLOCKED. "
+        "Resolve manually before re-running."
+    )
+    LOGGER.error("stale_execution_blocked state_path=%s", state_path)
+    print(message, file=sys.stderr)
+    return 1
+
+
+def _validate_command_allowed(
+    parsed: argparse.Namespace,
+    root: Path,
+    constraints: ConstraintsConfig,
+) -> str | None:
+    state_path = root / constraints.workflow.state_file
+    current_state = _read_current_state(state_path)
+    command = _canonical_command(parsed)
+    allowed_commands = constraints.workflow.allowed_commands_by_state.get(
+        current_state,
+        [],
+    )
+    if command in allowed_commands:
+        return None
+
+    allowed_text = ", ".join(allowed_commands) if allowed_commands else "(none)"
+    message = (
+        f"Command {command!r} is not allowed in state {current_state!r}. "
+        f"Allowed commands: {allowed_text}"
+    )
+    LOGGER.error(
+        "state_validation_failed state=%s command=%s allowed=%s",
+        current_state,
+        command,
+        allowed_commands,
+    )
+    return message
+
+
+def _read_current_state(state_path: Path) -> str:
+    if not state_path.exists():
+        return "INIT"
+
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("workflow state file must contain a JSON object")
+    for key in ("current_state", "state"):
+        value = data.get(key)
+        if isinstance(value, str):
+            return value
+
+    raise ValueError(
+        "workflow state file missing string field 'current_state' or 'state'"
+    )
+
+
+def _canonical_command(parsed: argparse.Namespace) -> str:
+    if parsed.command == "go":
+        return f"aiw go {TASK_PLACEHOLDER}"
+    if parsed.command == "reset":
+        return f"aiw reset {TASK_PLACEHOLDER}"
+    return f"aiw {parsed.command}"
 
 
 def undo(root: Path) -> None:
