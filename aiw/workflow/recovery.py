@@ -45,7 +45,8 @@ def recover_stale_execution(state_path: Path) -> None:
     _write_state_payload(state_path, payload)
 
     repo_root = _repo_root_from_state_path(state_path)
-    run_id = str(payload.get("run_id") or "stale-execution-recovery")
+    metadata = payload.get("metadata") or {}
+    run_id = str(metadata.get("run_id") or "stale-execution-recovery")
     trace_path = _trace_path(repo_root, constraints)
 
     _emit_unchecked_event(

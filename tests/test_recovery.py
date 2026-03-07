@@ -16,7 +16,11 @@ def test_check_stale_execution_detects_executing_state_on_startup(
     state_path = repo_root / ".aiw" / "workflow_state.json"
     _write_state(
         state_path,
-        {"current_state": "EXECUTING", "run_id": "run-123", "state": "EXECUTING"},
+        {
+            "current_state": "EXECUTING",
+            "metadata": {"run_id": "run-123"},
+            "state": "EXECUTING",
+        },
     )
 
     assert check_stale_execution(state_path) is True
@@ -29,7 +33,11 @@ def test_recover_stale_execution_transitions_to_blocked_and_emits_event(
     state_path = repo_root / ".aiw" / "workflow_state.json"
     _write_state(
         state_path,
-        {"current_state": "EXECUTING", "run_id": "run-123", "state": "EXECUTING"},
+        {
+            "current_state": "EXECUTING",
+            "metadata": {"run_id": "run-123"},
+            "state": "EXECUTING",
+        },
     )
 
     recover_stale_execution(state_path)
@@ -37,7 +45,7 @@ def test_recover_stale_execution_transitions_to_blocked_and_emits_event(
     state = _read_state(state_path)
     assert state["current_state"] == "BLOCKED"
     assert state["state"] == "BLOCKED"
-    assert state["run_id"] == "run-123"
+    assert state.get("metadata", {}).get("run_id") == "run-123"
 
     trace_files = sorted((repo_root / ".aiw" / "runs").glob("*.jsonl"))
     assert len(trace_files) == 1
@@ -66,7 +74,11 @@ def test_recover_stale_execution_is_noop_when_state_is_not_executing(
     state_path = repo_root / ".aiw" / "workflow_state.json"
     _write_state(
         state_path,
-        {"current_state": "PLANNED", "run_id": "run-123", "state": "PLANNED"},
+        {
+            "current_state": "PLANNED",
+            "metadata": {"run_id": "run-123"},
+            "state": "PLANNED",
+        },
     )
 
     recover_stale_execution(state_path)
@@ -82,7 +94,11 @@ def test_check_and_recover_ignore_stale_state_when_policy_disabled(
     state_path = repo_root / ".aiw" / "workflow_state.json"
     _write_state(
         state_path,
-        {"current_state": "EXECUTING", "run_id": "run-123", "state": "EXECUTING"},
+        {
+            "current_state": "EXECUTING",
+            "metadata": {"run_id": "run-123"},
+            "state": "EXECUTING",
+        },
     )
 
     assert check_stale_execution(state_path) is False

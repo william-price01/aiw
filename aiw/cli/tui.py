@@ -29,7 +29,8 @@ def render_status(root: Path) -> str:
 
     payload = json.loads(state_path.read_text(encoding="utf-8"))
     state = _read_state_value(payload)
-    run_id = _string_field(payload, "run_id")
+    metadata = payload.get("metadata") or {}
+    run_id = _string_field(metadata, "run_id") if isinstance(metadata, dict) else None
 
     lines = ["Workflow Status", f"State: {state}"]
     if run_id is not None:
