@@ -1,8 +1,6 @@
 """Bounded task execution loop for AIW task runs."""
-
 from __future__ import annotations
 
-import json
 import os
 import shlex
 import shutil
@@ -20,8 +18,8 @@ from aiw.infra.trace import TraceEmitter
 from aiw.orchestrator.coder import PatchResult, TaskSpec, run_coder_session
 from aiw.orchestrator.fixer import build_fixer_spawned_event_data, run_fixer_session
 from aiw.tasks.lint import check_task_lint
+from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
 from aiw.workflow.gates import check_constraints_gate
-from aiw.workflow.state_machine import WorkflowStateMachine
 
 PatchRunner = Callable[[TaskSpec, ConstraintsConfig], PatchResult]
 FixerRunner = Callable[[TaskSpec, str, ConstraintsConfig], PatchResult]
@@ -69,19 +67,18 @@ def execute_task(
 
     state_path = repo_root / constraints.workflow.state_file
     machine = WorkflowStateMachine.load(state_path)
+
     if machine.current_state != "PLANNED":
         raise ExecutionError(
             f"task execution requires PLANNED state, found {machine.current_state}"
         )
 
     run_id = str(uuid4())
-    trace = TraceEmitter(run_id, _trace_path(repo_root))
-    trace.emit(
-        "constraint_validation",
-        {"task_id": task_id, "status": "passed"},
-    )
+    trace = TraceEmitter(run_id, _trace_path(repo_root, constraints))
+    trace.emit("constraint_validation", {"task_id": task_id, "status": "passed"})
 
     _transition(machine, state_path, trace, "aiw go TASK-###", run_id=run_id)
+
     with _pushd(repo_root):
         create_checkpoint(f"{task_id} baseline")
 
@@ -108,20 +105,11 @@ def execute_task(
 
     trace.emit(
         "test_run_failed",
-        {
-            "task_id": task_id,
-            "iteration": 1,
-            "exit_code": initial_test.exit_code,
-        },
+        {"task_id": task_id, "iteration": 1, "exit_code": initial_test.exit_code},
     )
     trace.emit(
         "quality_gate_failed",
-        {
-            "task_id": task_id,
-            "gate": "tests",
-            "iteration": 1,
-            "exit_code": initial_test.exit_code,
-        },
+        {"task_id": task_id, "gate": "tests", "iteration": 1, "exit_code": initial_test.exit_code},
     )
     trace.emit(
         "fixer_spawned",
@@ -147,20 +135,11 @@ def execute_task(
 
     trace.emit(
         "test_run_failed",
-        {
-            "task_id": task_id,
-            "iteration": 2,
-            "exit_code": fixed_test.exit_code,
-        },
+        {"task_id": task_id, "iteration": 2, "exit_code": fixed_test.exit_code},
     )
     trace.emit(
         "quality_gate_failed",
-        {
-            "task_id": task_id,
-            "gate": "tests",
-            "iteration": 2,
-            "exit_code": fixed_test.exit_code,
-        },
+        {"task_id": task_id, "gate": "tests", "iteration": 2, "exit_code": fixed_test.exit_code},
     )
     trace.emit(
         "iteration_exhausted",
@@ -194,20 +173,19 @@ def execute_task(
     )
 
 
+# ---------------------------------------------------------------------------
+# Internal helpers
+# ---------------------------------------------------------------------------
+
 def _default_coder_runner(repo_root: Path) -> PatchRunner:
     return lambda task_spec, constraints: run_coder_session(
-        task_spec,
-        constraints,
-        repo_root=repo_root,
+        task_spec, constraints, repo_root=repo_root
     )
 
 
 def _default_fixer_runner(repo_root: Path) -> FixerRunner:
     return lambda task_spec, test_output, constraints: run_fixer_session(
-        task_spec,
-        test_output,
-        constraints,
-        repo_root=repo_root,
+        task_spec, test_output, constraints, repo_root=repo_root
     )
 
 
@@ -247,22 +225,20 @@ def _run_tests(
 ) -> TestRunResult:
     command = _parse_command(constraints.quality.test_command)
     _clear_python_caches(repo_root)
+
     env = os.environ.copy()
-    current_pythonpath = env.get("PYTHONPATH")
     repo_path = str(repo_root)
+    current_pythonpath = env.get("PYTHONPATH")
     env["PYTHONPATH"] = (
-        repo_path
-        if not current_pythonpath
+        repo_path if not current_pythonpath
         else f"{repo_path}{os.pathsep}{current_pythonpath}"
     )
+
     trace.emit(
         "test_run_started",
-        {
-            "task_id": task_id,
-            "iteration": iteration,
-            "command": command,
-        },
+        {"task_id": task_id, "iteration": iteration, "command": command},
     )
+
     completed = subprocess.run(
         tuple(command),
         cwd=repo_root,
@@ -278,11 +254,7 @@ def _run_tests(
     if completed.returncode == 0:
         trace.emit(
             "test_run_passed",
-            {
-                "task_id": task_id,
-                "iteration": iteration,
-                "exit_code": completed.returncode,
-            },
+            {"task_id": task_id, "iteration": iteration, "exit_code": completed.returncode},
         )
 
     return TestRunResult(
@@ -319,21 +291,12 @@ def _finalize_pass(
                 "tracker_file": constraints.execution.task_completion.tracker_file,
             },
         )
-
     _transition(machine, state_path, trace, "on:success", run_id=run_id)
     trace.emit(
         "run_complete",
-        {
-            "task_id": task_id,
-            "status": "PASS",
-            "iterations_used": iterations_used,
-        },
+        {"task_id": task_id, "status": "PASS", "iterations_used": iterations_used},
     )
-    return ExecutionResult(
-        status="PASS",
-        iterations_used=iterations_used,
-        run_id=run_id,
-    )
+    return ExecutionResult(status="PASS", iterations_used=iterations_used, run_id=run_id)
 
 
 def _append_task_completion(
@@ -345,12 +308,17 @@ def _append_task_completion(
     task_completion = constraints.execution.task_completion
     if not task_completion.mark_on_pass:
         return
-
     tracker_path = repo_root / task_completion.tracker_file
     tracker_path.parent.mkdir(parents=True, exist_ok=True)
-    timestamp = datetime.now(timezone.utc).isoformat()
-    with tracker_path.open("a", encoding="utf-8") as tracker_file:
-        tracker_file.write(f"- {timestamp} {task_id} {run_id} PASS\n")
+    completed_at = (
+        datetime.now(timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
+    line = f"| {task_id} | {run_id} | {completed_at} | PASS | Completed by aiw go |\n"
+    with tracker_path.open("a", encoding="utf-8") as f:
+        f.write(line)
 
 
 def _transition(
@@ -363,39 +331,22 @@ def _transition(
 ) -> None:
     from_state = machine.current_state
     to_state = machine.transition(command)
-    _write_state(state_path, to_state, run_id)
+    machine.save(state_path)
     trace.emit(
         "state_transition",
-        {
-            "from_state": from_state,
-            "to_state": to_state,
-            "trigger": command,
-        },
+        {"from_state": from_state, "to_state": to_state, "trigger": command},
     )
 
 
-def _write_state(state_path: Path, current_state: str, run_id: str) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps(
-            {"current_state": current_state, "run_id": run_id},
-            indent=2,
-            sort_keys=True,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-
-def _trace_path(repo_root: Path) -> Path:
+def _trace_path(repo_root: Path, constraints: ConstraintsConfig) -> Path:
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-    return repo_root / ".aiw" / "runs" / f"run-{timestamp}.jsonl"
+    template = constraints.observability.artifacts.jsonl_trace_path
+    return repo_root / template.replace("<timestamp>", timestamp)
 
 
 def _parse_command(command: str | None) -> list[str]:
     if command is None:
         raise ExecutionError("quality.test_command must be configured")
-
     normalized = command.strip().strip("`").strip()
     if not normalized:
         raise ExecutionError("quality.test_command must be a non-empty command")
@@ -412,9 +363,7 @@ def _apply_patch(patch: str, repo_root: Path) -> None:
         check=False,
     )
     if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        stdout = completed.stdout.strip()
-        detail = stderr or stdout
+        detail = completed.stderr.strip() or completed.stdout.strip()
         suffix = f": {detail}" if detail else ""
         raise ExecutionError(f"git apply failed{suffix}")
 
