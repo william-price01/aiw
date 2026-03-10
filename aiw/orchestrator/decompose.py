@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import json
 import shutil
+import subprocess
 import tempfile
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -124,11 +126,48 @@ def _run_bounded_decompose_ai_session(
     pcp_paths: PcpPaths,
     prompt: str,
 ) -> RawDecomposeOutput:
-    raise NotImplementedError(
-        "bounded decompose AI session is not configured; "
-        f"received PCP context for {len(pcp_paths)} artifact(s) "
-        f"and prompt length {len(prompt)}"
+    json_prompt = (
+        f"{prompt}\n\n"
+        "Return only valid JSON mapping relative docs/tasks paths to full "
+        "file contents. "
+        "Do not include markdown fences, explanations, or any surrounding text."
     )
+    try:
+        completed = subprocess.run(
+            ("codex", "exec", json_prompt),
+            check=True,
+            capture_output=True,
+            text=True,
+            cwd=pcp_paths.root,
+        )
+    except subprocess.CalledProcessError as exc:
+        detail = _excerpt_text(exc.stderr) or _excerpt_text(exc.stdout)
+        suffix = f": {detail}" if detail else ""
+        raise DecomposeOutputError(f"Codex CLI invocation failed{suffix}") from exc
+    except FileNotFoundError as exc:
+        raise DecomposeOutputError(
+            "Codex CLI not found; ensure 'codex' is installed and on PATH"
+        ) from exc
+
+    stdout = completed.stdout.strip()
+    try:
+        payload = json.loads(stdout)
+    except json.JSONDecodeError as exc:
+        excerpt = _excerpt_text(stdout)
+        suffix = f": {excerpt}" if excerpt else ""
+        raise DecomposeOutputError(
+            f"decompose session returned invalid JSON{suffix}"
+        ) from exc
+
+    if not isinstance(payload, dict) or not all(
+        isinstance(path, str) and isinstance(content, str)
+        for path, content in payload.items()
+    ):
+        raise DecomposeOutputError(
+            "decompose session returned invalid JSON: expected object[str, str]"
+        )
+
+    return payload
 
 
 def _write_outputs_atomically(root: Path, output: RawDecomposeOutput) -> list[str]:
@@ -200,3 +239,9 @@ def _normalize_output_path(relative_path: str) -> Path:
 
     return path
 
+
+def _excerpt_text(raw: str, limit: int = 500) -> str:
+    text = raw.strip()
+    if len(text) <= limit:
+        return text
+    return text[:limit]
