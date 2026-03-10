@@ -33,16 +33,14 @@ def recover_stale_execution(state_path: Path) -> None:
         return
 
     transition_command = f"on:{policy.on_detect_executing_at_startup.emit_event}"
-    machine = WorkflowStateMachine(current_state=current_state)
+    machine = WorkflowStateMachine.load(state_path)
     next_state = machine.transition(transition_command)
     if next_state != policy.on_detect_executing_at_startup.transition_to:
         raise ValueError(
             "stale execution recovery transition does not match configured target state"
         )
 
-    payload["current_state"] = next_state
-    payload["state"] = next_state
-    _write_state_payload(state_path, payload)
+    machine.save(state_path)
 
     repo_root = _repo_root_from_state_path(state_path)
     metadata = payload.get("metadata") or {}
@@ -93,21 +91,10 @@ def _read_state_payload(state_path: Path) -> dict[str, Any]:
 
 
 def _extract_current_state(payload: dict[str, Any]) -> str:
-    for key in ("current_state", "state"):
-        value = payload.get(key)
-        if isinstance(value, str):
-            return value
-    raise ValueError(
-        "workflow state file missing string field 'current_state' or 'state'"
-    )
-
-
-def _write_state_payload(state_path: Path, payload: dict[str, Any]) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    state_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    value = payload.get("current_state")
+    if isinstance(value, str):
+        return value
+    raise ValueError("workflow state file missing string field 'current_state'")
 
 
 def _trace_path(repo_root: Path, constraints: ConstraintsConfig) -> Path:
