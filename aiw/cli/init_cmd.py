@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
+
+from aiw.workflow.state_machine import WorkflowStateMachine
 
 
 def init_project(root: Path) -> None:
@@ -18,7 +19,4 @@ def init_project(root: Path) -> None:
     if state_file.exists():
         return
 
-    state_file.write_text(
-        json.dumps({"state": "INIT"}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    WorkflowStateMachine(current_state="INIT").save(state_file)

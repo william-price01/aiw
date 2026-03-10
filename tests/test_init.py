@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 from aiw.cli import init_project
+from aiw.workflow import WorkflowStateMachine
 
 
 def test_init_project_creates_minimum_internal_state_in_git_repo(
@@ -22,7 +23,10 @@ def test_init_project_creates_minimum_internal_state_in_git_repo(
 
     state_file = repo_root / ".aiw" / "workflow_state.json"
     assert state_file.is_file()
-    assert json.loads(state_file.read_text(encoding="utf-8")) == {"state": "INIT"}
+    assert json.loads(state_file.read_text(encoding="utf-8")) == {
+        "current_state": "INIT"
+    }
+    assert WorkflowStateMachine.load(state_file).current_state == "INIT"
 
 
 def test_init_project_is_idempotent_and_does_not_overwrite_existing_state(

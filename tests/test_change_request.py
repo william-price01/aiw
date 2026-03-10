@@ -114,8 +114,11 @@ def test_request_change_command_creates_file_and_updates_state(
     assert f"- target artifact: {target}" in content
     assert "- reason: Need upstream correction" in content
     assert "- impact: Re-approval is required" in content
-    assert _read_workflow_state(repo_root)["state"] == expected_state
-    assert _read_workflow_state(repo_root)["current_state"] == expected_state
+    assert _read_workflow_state(repo_root) == {"current_state": expected_state}
+    assert (
+        WorkflowStateMachine.load(_state_file(repo_root)).current_state
+        == expected_state
+    )
 
 
 @pytest.mark.parametrize(
@@ -152,14 +155,13 @@ def _init_repo(tmp_path: Path) -> Path:
 
 
 def _write_workflow_state(repo_root: Path, state: str) -> None:
-    state_path = repo_root / ".aiw" / "workflow_state.json"
-    state_path.write_text(
-        json.dumps({"state": state}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    WorkflowStateMachine(current_state=state).save(_state_file(repo_root))
 
 
 def _read_workflow_state(repo_root: Path) -> dict[str, str]:
-    state_path = repo_root / ".aiw" / "workflow_state.json"
-    data = json.loads(state_path.read_text(encoding="utf-8"))
+    data = json.loads(_state_file(repo_root).read_text(encoding="utf-8"))
     return {key: str(value) for key, value in data.items()}
+
+
+def _state_file(repo_root: Path) -> Path:
+    return repo_root / ".aiw" / "workflow_state.json"

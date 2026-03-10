@@ -12,7 +12,7 @@ import pytest
 from aiw.cli.decompose_cmd import decompose
 from aiw.cli.init_cmd import init_project
 from aiw.orchestrator.decompose import DecomposeResult
-from aiw.workflow import IllegalStateTransitionError
+from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
 from aiw.workflow.gates import GIT_ACCESS_COMMAND
 
 
@@ -24,7 +24,7 @@ def test_decompose_refuses_unless_constraints_approved(tmp_path: Path) -> None:
         decompose(repo_root)
 
     assert not (repo_root / "docs" / "tasks").exists()
-    assert _read_workflow_state(repo_root)["state"] == "ADRS_APPROVED"
+    assert _read_workflow_state(repo_root) == {"current_state": "ADRS_APPROVED"}
 
 
 def test_decompose_runs_constraints_gate_before_generation(
@@ -84,7 +84,7 @@ def test_decompose_ai_failure_leaves_no_partial_task_artifacts(
 
     assert not tasks_dir.exists()
     assert not list((repo_root / "docs").glob("decompose-*"))
-    assert _read_workflow_state(repo_root)["state"] == "CONSTRAINTS_APPROVED"
+    assert _read_workflow_state(repo_root) == {"current_state": "CONSTRAINTS_APPROVED"}
 
 
 def test_decompose_writes_outputs_atomically_and_transitions_to_planned(
@@ -133,8 +133,8 @@ def test_decompose_writes_outputs_atomically_and_transitions_to_planned(
     ) == "Task body\n"
     assert any(entry.endswith("->tasks") for entry in replaced_paths)
     assert not list((repo_root / "docs").glob("decompose-*"))
-    assert _read_workflow_state(repo_root)["state"] == "PLANNED"
-    assert _read_workflow_state(repo_root)["current_state"] == "PLANNED"
+    assert _read_workflow_state(repo_root) == {"current_state": "PLANNED"}
+    assert WorkflowStateMachine.load(_state_file(repo_root)).current_state == "PLANNED"
     assert (
         "state_transition from=CONSTRAINTS_APPROVED "
         "action=aiw decompose to=PLANNED"
@@ -155,17 +155,16 @@ def _init_repo(tmp_path: Path) -> Path:
 
 
 def _write_workflow_state(repo_root: Path, state: str) -> None:
-    state_path = repo_root / ".aiw" / "workflow_state.json"
-    state_path.write_text(
-        json.dumps({"state": state}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    WorkflowStateMachine(current_state=state).save(_state_file(repo_root))
 
 
 def _read_workflow_state(repo_root: Path) -> dict[str, str]:
-    state_path = repo_root / ".aiw" / "workflow_state.json"
-    data = json.loads(state_path.read_text(encoding="utf-8"))
+    data = json.loads(_state_file(repo_root).read_text(encoding="utf-8"))
     return {key: str(value) for key, value in data.items()}
+
+
+def _state_file(repo_root: Path) -> Path:
+    return repo_root / ".aiw" / "workflow_state.json"
 
 
 def _valid_output() -> dict[str, str]:
