@@ -101,8 +101,6 @@ observability:
     - test_run_started
     - test_run_failed
     - test_run_passed
-    - fixer_spawned
-    - iteration_exhausted
     - blocked
     - run_complete
     - task_marked_complete
@@ -199,13 +197,10 @@ workflow:
     on: success
     to: PLANNED
   - from: EXECUTING
-    on: exhaustion
+    on: test_failed
     to: BLOCKED
   - from: EXECUTING
-    on: scope_violation_second
-    to: BLOCKED
-  - from: EXECUTING
-    on: oversized_split
+    on: scope_violation
     to: BLOCKED
   - from: EXECUTING
     on: abort
@@ -219,7 +214,6 @@ locking_rules:
   hard_fail_on_locked_artifact_modification_during_EXECUTING: true
   locked_artifacts_checked_via_git_diff_name_only: true
 execution:
-  max_iterations_per_task: 3
   task_completion:
     enabled: true
     tracker_file: docs/tasks/COMPLETED.md

@@ -230,3 +230,51 @@ tasks:
     filescope: ["aiw/cli/tui.py", "tests/test_tui.py"]
     tests: ["pytest tests/test_tui.py -q", "ruff check .", "mypy aiw tests"]
     acceptance: ["Derives display from workflow_state.json", "Shows task artifacts and status", "Shows run trace events", "No speculative UI state", "Read-only"]
+
+  - id: TASK-039
+    title: "DAG executor — aiw run command"
+    type: IMPLEMENTATION
+    depends_on: [TASK-038]
+    filescope: ["aiw/orchestrator/dag_executor.py", "aiw/cli/run_cmd.py", "tests/test_dag_executor.py"]
+    tests: ["pytest tests/test_dag_executor.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["aiw run walks DAG in topological order", "Independent layer tasks run concurrently", "File-scope collision serializes within layer", "BLOCKED pauses run and returns PAUSED result", "aiw run --resume skips PASSED tasks", "Five DAG trace events emitted"]
+
+  - id: TASK-043
+    title: "Session capture — pty-based Codex subprocess wrapper"
+    type: IMPLEMENTATION
+    depends_on: [TASK-038]
+    filescope: ["aiw/infra/session_capture.py", "aiw/orchestrator/coder.py", "aiw/orchestrator/fixer.py", "tests/test_session_capture.py"]
+    tests: ["pytest tests/test_session_capture.py tests/test_coder.py tests/test_fixer.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["SessionCapture spawns via pty and returns exit code", "Output written to .aiw/runs/session-<run_id>-coder.log", "read_log() returns log contents", "is_active() correct during/after run", "write_stdin() raises NotImplementedError", "Existing coder/fixer tests pass"]
+
+  - id: TASK-044
+    title: "Remove Fixer session and iteration cap"
+    type: IMPLEMENTATION
+    depends_on: [TASK-038]
+    filescope: ["aiw/orchestrator/executor.py", "aiw/infra/constraints.py", "aiw/infra/trace.py", "aiw/orchestrator/blocker.py", "aiw/tasks/capsule_log.py", "tests/test_executor_happy.py", "tests/test_blocker.py", "tests/test_capsule_log.py", "tests/integration/test_error_paths.py", "docs/constraints.yml", "aiw/orchestrator/fixer.py", "tests/test_fixer.py", "tests/test_executor_fixer.py"]
+    tests: ["pytest -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["fixer.py deleted", "test_fixer.py deleted", "test_executor_fixer.py deleted", "max_iterations_per_task removed from constraints.yml and ConstraintsConfig", "fixer_spawned and iteration_exhausted removed from trace required events", "BLOCKED on test failure uses failure_reason=test_failed", "Full test suite passes"]
+
+  - id: TASK-040
+    title: "Canvas API server"
+    type: IMPLEMENTATION
+    depends_on: [TASK-039, TASK-043]
+    filescope: ["aiw/canvas/__init__.py", "aiw/canvas/server.py", "tests/test_canvas_server.py"]
+    tests: ["pytest tests/test_canvas_server.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["GET /api/state returns workflow state", "GET /api/tasks returns task list with status", "POST /api/go/{task_id} shells aiw go", "POST /api/spec/chat/{artifact} invokes SpecDraftSession", "GET /api/events streams SSE state changes", "No direct writes to .aiw/ or docs/"]
+
+  - id: TASK-041
+    title: "Canvas frontend"
+    type: IMPLEMENTATION
+    depends_on: [TASK-040]
+    filescope: ["aiw/canvas/frontend/**"]
+    tests: ["pytest tests/test_canvas_frontend_build.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["npm run build succeeds", "Spec Mode renders per-artifact chat+document panels", "Approve button state-gated", "Execution Mode renders live DAG graph", "TaskDetail panel on node click", "TraceViewer appends live events", "BlockerPanel on blocked nodes", "Mode switching is state-driven"]
+
+  - id: TASK-042
+    title: "Canvas packaging and local serve"
+    type: IMPLEMENTATION
+    depends_on: [TASK-041]
+    filescope: ["aiw/canvas/static/**", "aiw/canvas/serve.py", "aiw/cli/canvas_cmd.py", "aiw/cli/main.py", "pyproject.toml", "tests/test_canvas_serve.py"]
+    tests: ["pytest tests/test_canvas_serve.py -q", "ruff check .", "mypy aiw tests"]
+    acceptance: ["aiw canvas starts server and opens browser", "aiw canvas refused outside AIW repo", "GET / serves index.html", "GET /api/state returns state", "aiw canvas --port works", "Static assets pre-bundled in package"]

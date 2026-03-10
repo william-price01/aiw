@@ -57,7 +57,7 @@ AIW MVP must support:
   - layer import boundaries
 - A bounded execution engine:
   - one selected task at a time
-  - Coder + optional Fixer sessions
+  - Coder session
   - deterministic termination
 - Deterministic decomposition:
   - generate `docs/tasks/DAG.md` + `docs/tasks/DAG.yml`
@@ -202,7 +202,7 @@ State transitions reflect re-approval.
   - `CONSTRAINTS_DRAFT` → `docs/constraints.yml`
 - Approval is human-driven only. There is no automatic approval and no automatic transition to the next phase.
 - `aiw decompose` is AI-assisted but is not a conversational DRAFT state; it is a deterministic planning command allowed only from `CONSTRAINTS_APPROVED`.
-- Execution-phase AI uses bounded iterative sessions (Coder + optional Fixer) under strict iteration and write-scope enforcement.
+- Execution-phase AI uses a single bounded Coder session under strict write-scope enforcement.
 
 ## 6. Task Selection vs Task Execution
 
@@ -230,12 +230,10 @@ Future extensions may add deterministic selection (e.g., DAG-based), but that is
 The execution loop is strictly bounded:
 
 - One selected task per run.
-- One Coder session per task run.
-- Optional Fixer session only after failed test run.
-- Hard max iteration cap (default: 3).
+- One Coder session per task run. No retries.
 - Deterministic termination:
   - PASS → `PLANNED`
-  - exhaustion → `BLOCKED`
+  - FAIL → `BLOCKED`
 
 No background scheduler.
 No daemon.
@@ -257,16 +255,12 @@ No concurrency.
    - Transition to `PLANNED`.
    - Terminate.
 8. If tests FAIL:
-   - Spawn Fixer session.
-   - Apply fix.
-   - Re-run tests.
-9. Stop after max N iterations (default: 3).
-10. If still failing:
-    - Generate `docs/reports/TASK-###_blocker_report.md`.
-    - Update task log.
-    - Transition to `BLOCKED`.
+   - Generate `docs/reports/TASK-###_blocker_report.md`.
+   - Update task log.
+   - Transition to `BLOCKED`.
+   - Terminate.
 
-Agent terminates on PASS or BLOCKED.
+Agent terminates on PASS or BLOCKED. No retries within a single run.
 
 ---
 
@@ -332,8 +326,6 @@ Git diff is the source of truth for code changes.
     - test_run_started
     - test_run_failed
     - test_run_passed
-    - fixer_spawned
-    - iteration_exhausted
     - blocked
     - run_complete
     - task_marked_complete
@@ -402,6 +394,108 @@ MVP is complete when:
 1) State machine + artifact locking
 2) Constraints gate enforcement
 3) Deterministic decompose outputs
-4) Bounded execution engine (Coder/Fixer)
+4) Bounded execution engine (Coder session)
 5) Logs + observability
 6) CLI/TUI polish
+
+---
+
+## 14. DAG Executor (`aiw run`)
+
+### 14.1 Overview
+
+`aiw run` is an autonomous execution command that walks the task DAG in topological order, parallelizes independent tasks where possible, and only interrupts the human on BLOCKED or when a change request is required. During a clean run, the human never needs to manually dispatch individual tasks.
+
+`aiw run` is available from `PLANNED` state only.
+
+### 14.2 Behavior
+
+1. Load `docs/tasks/DAG.yml` and compute topological order.
+2. Identify parallelizable layers (tasks with no unresolved interdependencies).
+3. For each task layer (innermost dependency-safe set):
+   - Invoke the existing `aiw go TASK-###` execution loop per task.
+   - Tasks within the same parallelizable layer may execute concurrently.
+   - Wait for all tasks in a layer to complete before advancing to the next layer.
+4. On task PASS: mark complete, advance DAG state.
+5. On task BLOCKED:
+   - Pause the entire run.
+   - Surface the blocker report to the operator.
+   - Wait for explicit human resolution (`aiw run --resume` or manual `aiw go` after resolving).
+   - Do not proceed with other tasks that depend on the blocked task.
+   - Tasks in the current layer without dependency on the blocked task may continue to completion.
+6. On completion of all tasks: transition to a terminal run-complete state and report summary.
+
+### 14.3 State Machine
+
+- `aiw run` is only allowed from `PLANNED`.
+- Individual `aiw go` invocations within the run follow all existing execution-phase state machine rules.
+- Between task completions, state remains `PLANNED` to preserve existing invariants.
+- The DAG executor does not introduce new workflow states.
+
+### 14.4 Concurrency Model
+
+Parallelism is layer-scoped only. Tasks within the same DAG layer with no mutual file-scope collision may execute in parallel. File-scope collision detection is required before launching parallel tasks in the same layer.
+
+No task may execute before all its declared dependencies have PASSed.
+
+### 14.5 Non-Goals
+
+- No autonomous DAG task discovery beyond `DAG.yml`.
+- No dynamic re-decomposition during a run.
+- Parallel execution across layers is not permitted.
+
+---
+
+## 15. Canvas (Control Plane Interface)
+
+### 15.1 Overview
+
+Canvas is a local web-based control plane for AIW. It is the primary interface for the full AIW lifecycle — from initial spec drafting through autonomous execution — for operators who prefer a visual interface over raw CLI.
+
+Canvas does not replace the CLI. The AIW CLI remains the authoritative command surface. Canvas drives the CLI; it never writes state directly.
+
+### 15.2 Spec Mode
+
+In Spec Mode, the iterative AI-assisted spec development flow defined in §5.5 and SDD §4.1 is conducted inside the canvas. The canvas is the UI surface for that process — not a separate tool, not a terminal. The same state machine rules apply: entering a DRAFT state establishes one active editable artifact; iteration continues until the human explicitly approves; approval is human-driven only.
+
+Each spec artifact (PRD, SDD, ADRs, constraints) has a dedicated panel with:
+- A chat interface for AI-assisted drafting.
+- A live document view showing the current artifact content.
+- An approve button that triggers the corresponding `aiw approve-*` command when the human is ready.
+- Locked artifacts are rendered read-only.
+
+### 15.3 Execution Mode
+
+Once the project reaches `PLANNED` state, the canvas switches to Execution Mode:
+
+- The full task DAG is rendered as a live visual graph. Nodes are colored by state: pending, executing, passed, blocked.
+- The operator may trigger `aiw run` from the canvas to start autonomous execution.
+- Active agent sessions are visible in real time via trace event streaming.
+- Blocked nodes surface the blocker report inline. The operator can inspect the blocker, resolve it, and resume execution without leaving the canvas.
+- Any node is clickable to view: task spec, capsule log, trace events, and live coding session output.
+- Change requests can be submitted from the canvas, which triggers `aiw request-change`.
+
+### 15.3.1 Session Visibility
+
+Coding sessions (Coder) are observable from the canvas in real time. Clicking an executing or completed task node opens a session pane with two views:
+
+**Terminal view**: Raw streaming output from the Codex CLI process, rendered as a terminal emulator in the browser. During an active session, output streams live. After session completion, the full session log is available for replay.
+
+**Structured summary view**: Per-iteration panels showing the prompt context (task spec excerpt), the resulting patch (git diff), and the test output. This view is assembled from existing artifacts — task spec, git diff, capsule log — and requires no additional capture.
+
+Session logs are persisted to `.aiw/runs/` alongside the JSONL trace and are available for inspection after the session ends. The session pipe is designed to support interactive input in a future extension; for MVP it is read-only.
+
+### 15.4 Constraints
+
+- Canvas never bypasses the AIW state machine.
+- All mutations go through the AIW CLI or AIW Python API surface. The canvas backend does not write `.aiw/workflow_state.json` or any locked artifact directly.
+- Canvas is local-only. No external services, no authentication, no cloud connectivity.
+- Canvas is launched with `aiw canvas` and serves on localhost.
+
+### 15.5 Non-Goals
+
+- No multi-user support.
+- No cloud hosting.
+- No mobile interface.
+- Canvas does not replace the CLI for scripted or CI usage.
+- Interactive input to coding sessions (read-only session visibility for MVP; interactive path is forward-compatible but not implemented).
