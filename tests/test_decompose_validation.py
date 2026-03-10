@@ -153,7 +153,7 @@ def _init_repo(tmp_path: Path) -> Path:
 def _write_workflow_state(repo_root: Path, state: str) -> None:
     state_path = repo_root / ".aiw" / "workflow_state.json"
     state_path.write_text(
-        json.dumps({"state": state}, indent=2, sort_keys=True) + "\n",
+        json.dumps({"current_state": state}, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
 

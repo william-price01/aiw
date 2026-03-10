@@ -11,7 +11,7 @@ import pytest
 
 from aiw.cli.decompose_cmd import decompose
 from aiw.cli.init_cmd import init_project
-from aiw.orchestrator.decompose import DecomposeResult
+from aiw.orchestrator.decompose import DecomposeOutputError, DecomposeResult
 from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
 from aiw.workflow.gates import GIT_ACCESS_COMMAND
 
@@ -141,16 +141,138 @@ def test_decompose_writes_outputs_atomically_and_transitions_to_planned(
     ) in caplog.text
 
 
+def test_decompose_codex_non_zero_exit_raises_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = _init_repo(tmp_path)
+    _write_workflow_state(repo_root, "CONSTRAINTS_APPROVED")
+
+    monkeypatch.setattr(
+        "aiw.workflow.gates._validate_git_repo_access",
+        lambda: None,
+    )
+
+    def fake_codex_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        cwd: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        assert command[0:2] == ("codex", "exec")
+        assert check is True
+        assert capture_output is True
+        assert text is True
+        assert cwd == repo_root
+        raise subprocess.CalledProcessError(
+            returncode=1,
+            cmd=command,
+            stderr="planner exploded",
+        )
+
+    monkeypatch.setattr("aiw.orchestrator.decompose.subprocess.run", fake_codex_run)
+
+    with pytest.raises(DecomposeOutputError, match="planner exploded"):
+        decompose(repo_root)
+
+    assert not (repo_root / "docs" / "tasks").exists()
+    assert _read_workflow_state(repo_root) == {"current_state": "CONSTRAINTS_APPROVED"}
+
+
+def test_decompose_missing_codex_cli_raises_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = _init_repo(tmp_path)
+    _write_workflow_state(repo_root, "CONSTRAINTS_APPROVED")
+
+    monkeypatch.setattr(
+        "aiw.workflow.gates._validate_git_repo_access",
+        lambda: None,
+    )
+
+    def missing_codex_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        cwd: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        assert command[0:2] == ("codex", "exec")
+        assert cwd == repo_root
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(
+        "aiw.orchestrator.decompose.subprocess.run",
+        missing_codex_run,
+    )
+
+    with pytest.raises(DecomposeOutputError, match="Codex CLI not found"):
+        decompose(repo_root)
+
+    assert not (repo_root / "docs" / "tasks").exists()
+    assert _read_workflow_state(repo_root) == {"current_state": "CONSTRAINTS_APPROVED"}
+
+
+def test_decompose_invalid_json_raises_and_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    repo_root = _init_repo(tmp_path)
+    _write_workflow_state(repo_root, "CONSTRAINTS_APPROVED")
+
+    monkeypatch.setattr(
+        "aiw.workflow.gates._validate_git_repo_access",
+        lambda: None,
+    )
+
+    def invalid_json_codex_run(
+        command: tuple[str, ...],
+        *,
+        check: bool,
+        capture_output: bool,
+        text: bool,
+        cwd: Path,
+    ) -> subprocess.CompletedProcess[str]:
+        assert command[0:2] == ("codex", "exec")
+        assert cwd == repo_root
+        return subprocess.CompletedProcess(
+            args=command,
+            returncode=0,
+            stdout="not-json",
+        )
+
+    monkeypatch.setattr(
+        "aiw.orchestrator.decompose.subprocess.run",
+        invalid_json_codex_run,
+    )
+
+    with pytest.raises(DecomposeOutputError, match="invalid JSON"):
+        decompose(repo_root)
+
+    assert not (repo_root / "docs" / "tasks").exists()
+    assert _read_workflow_state(repo_root) == {"current_state": "CONSTRAINTS_APPROVED"}
+
+
 def _init_repo(tmp_path: Path) -> Path:
     repo_root = tmp_path / "repo"
     repo_root.mkdir()
     (repo_root / ".git").mkdir()
-    (repo_root / "docs").mkdir()
     init_project(repo_root)
-    (repo_root / "docs" / "constraints.yml").write_text(
+    docs_root = repo_root / "docs"
+    docs_root.mkdir(exist_ok=True)
+    (docs_root / "constraints.yml").write_text(
         Path("docs/constraints.yml").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
+    (docs_root / "prd.md").write_text("# PRD\n", encoding="utf-8")
+    (docs_root / "sdd.md").write_text("# SDD\n", encoding="utf-8")
+    adrs_root = docs_root / "adrs"
+    adrs_root.mkdir(exist_ok=True)
+    (adrs_root / "ADR-001.md").write_text("# ADR\n", encoding="utf-8")
     return repo_root
 
 
