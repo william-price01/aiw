@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import shutil
 import tempfile
 from collections.abc import Callable
@@ -61,7 +60,7 @@ def run_decompose(root: Path) -> DecomposeResult:
     """Run `aiw decompose` with state validation, gate checks, and atomic writes."""
     config = load_constraints(root / "docs" / "constraints.yml")
     state_path = root / config.workflow.state_file
-    current_state = _read_current_state(state_path)
+    current_state = WorkflowStateMachine.load(state_path).current_state
     _ensure_command_allowed(config, current_state, "aiw decompose")
     check_constraints_gate(config)
 
@@ -75,7 +74,7 @@ def run_decompose(root: Path) -> DecomposeResult:
 
     machine = WorkflowStateMachine(current_state=current_state)
     next_state = machine.transition("aiw decompose")
-    _write_current_state(state_path, next_state)
+    machine.save(state_path)
 
     return DecomposeResult(
         root=root,
@@ -201,26 +200,3 @@ def _normalize_output_path(relative_path: str) -> Path:
 
     return path
 
-
-def _read_current_state(state_path: Path) -> str:
-    if not state_path.exists():
-        return "INIT"
-
-    data = json.loads(state_path.read_text(encoding="utf-8"))
-    for key in ("current_state", "state"):
-        value = data.get(key)
-        if isinstance(value, str):
-            return value
-
-    raise ValueError(
-        "workflow state file missing string field 'current_state' or 'state'"
-    )
-
-
-def _write_current_state(state_path: Path, state: str) -> None:
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"current_state": state, "state": state}
-    state_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )

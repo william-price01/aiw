@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
@@ -77,32 +76,6 @@ def apply_change_request(
     state_machine._current_state = transition.to_state
 
 
-def load_current_state(state_path: Path) -> str:
-    """Load the persisted workflow state using the repo's mixed key convention."""
-    if not state_path.exists():
-        return "INIT"
-
-    data = json.loads(state_path.read_text(encoding="utf-8"))
-    for key in ("current_state", "state"):
-        value = data.get(key)
-        if isinstance(value, str):
-            return value
-
-    raise ValueError(
-        "workflow state file missing string field 'current_state' or 'state'"
-    )
-
-
-def save_current_state(state_path: Path, state: str) -> None:
-    """Persist workflow state with both keys for compatibility with existing code."""
-    state_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"current_state": state, "state": state}
-    state_path.write_text(
-        json.dumps(payload, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
-
-
 def _render_change_request(request: ChangeRequest) -> str:
     return (
         "# Change Request\n\n"
@@ -138,7 +111,7 @@ def request_change_for_repo(
     """Create the change request file and apply any required state rollback."""
     config = load_constraints(root / "docs" / "constraints.yml")
     state_path = root / config.workflow.state_file
-    current_state = load_current_state(state_path)
+    current_state = WorkflowStateMachine.load(state_path).current_state
     _ensure_request_change_allowed(config, current_state)
 
     output_path = root / config.boundaries.change_request.file
@@ -155,7 +128,7 @@ def request_change_for_repo(
     request = ChangeRequest(target=target, reason=reason, impact=impact)
     machine = WorkflowStateMachine(current_state=current_state)
     apply_change_request(request=request, state_machine=machine, config=config)
-    save_current_state(state_path, machine.current_state)
+    machine.save(state_path)
     return output_path
 
 

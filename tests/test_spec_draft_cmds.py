@@ -11,7 +11,7 @@ import pytest
 from aiw.cli.init_cmd import init_project
 from aiw.cli.spec_cmds import adrs, constraints, prd, sdd
 from aiw.orchestrator import DraftScopeViolationError, SpecDraftSession
-from aiw.workflow import IllegalStateTransitionError
+from aiw.workflow import IllegalStateTransitionError, WorkflowStateMachine
 
 
 @pytest.mark.parametrize(
@@ -38,8 +38,11 @@ def test_spec_draft_command_transitions_and_sets_active_scope(
     assert isinstance(session, SpecDraftSession)
     assert session.state == expected_state
     assert session.active_artifact_scope == expected_scope
-    assert _read_workflow_state(repo_root)["state"] == expected_state
-    assert _read_workflow_state(repo_root)["current_state"] == expected_state
+    assert _read_workflow_state(repo_root) == {"current_state": expected_state}
+    assert (
+        WorkflowStateMachine.load(_state_file(repo_root)).current_state
+        == expected_state
+    )
 
 
 @pytest.mark.parametrize(
@@ -110,14 +113,13 @@ def _init_repo(tmp_path: Path) -> Path:
 
 
 def _write_workflow_state(repo_root: Path, state: str) -> None:
-    state_path = repo_root / ".aiw" / "workflow_state.json"
-    state_path.write_text(
-        json.dumps({"state": state}, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
-    )
+    WorkflowStateMachine(current_state=state).save(_state_file(repo_root))
 
 
 def _read_workflow_state(repo_root: Path) -> dict[str, str]:
-    state_path = repo_root / ".aiw" / "workflow_state.json"
-    data = json.loads(state_path.read_text(encoding="utf-8"))
+    data = json.loads(_state_file(repo_root).read_text(encoding="utf-8"))
     return {key: str(value) for key, value in data.items()}
+
+
+def _state_file(repo_root: Path) -> Path:
+    return repo_root / ".aiw" / "workflow_state.json"
