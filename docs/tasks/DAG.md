@@ -32,6 +32,12 @@
 | TASK-022 | Layer import boundary enforcement | IMPLEMENTATION | TASK-003 |
 | TASK-023 | Integration tests — happy path | TESTING | TASK-028 |
 | TASK-029 | Integration tests — error and BLOCKED paths | TESTING | TASK-023 |
+| TASK-039 | DAG executor — `aiw run` command | IMPLEMENTATION | TASK-038 |
+| TASK-043 | Session capture — pty-based Codex subprocess wrapper | IMPLEMENTATION | TASK-038 |
+| TASK-044 | Remove Fixer session and iteration cap | IMPLEMENTATION | TASK-038 |
+| TASK-040 | Canvas API server | IMPLEMENTATION | TASK-039, TASK-043 |
+| TASK-041 | Canvas frontend | IMPLEMENTATION | TASK-040 |
+| TASK-042 | Canvas packaging and local serve | IMPLEMENTATION | TASK-041 |
 | TASK-024 | TUI rendering model | IMPLEMENTATION | TASK-028 |
 
 ---
@@ -94,3 +100,17 @@
 - TASK-023: Integration tests — happy path
 - TASK-029: Integration tests — error and BLOCKED paths
 - TASK-024: TUI rendering model
+
+### Layer 14 — Autonomous Execution + Session Capture + Fixer Removal
+- TASK-039: DAG executor — `aiw run` command
+- TASK-043: Session capture — pty-based Codex subprocess wrapper
+- TASK-044: Remove Fixer session and iteration cap
+
+### Layer 15 — Canvas Backend
+- TASK-040: Canvas API server (depends on TASK-039, TASK-043)
+
+### Layer 16 — Canvas Frontend
+- TASK-041: Canvas frontend
+
+### Layer 17 — Canvas Packaging
+- TASK-042: Canvas packaging and local serve
