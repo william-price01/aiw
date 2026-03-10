@@ -22,3 +22,5 @@
 - ADR-011-deterministic-crash-handling.md: Deterministic Crash Handling
 
 - ADR-012-hard-constraints-gate.md: Hard Constraints Gate
+
+- ADR-013-single-coder-session-no-fixer.md: Single Coder Session — No Fixer, No Iteration Cap
