@@ -68,7 +68,10 @@ def main(argv: Sequence[str] | None = None, root: Path | None = None) -> int:
 
     handler = _dispatch_table()[parsed.command]
     LOGGER.info("command_dispatch command=%s", parsed.command)
-    handler(parsed, repo_root)
+    try:
+        handler(parsed, repo_root)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 1
     return 0
 
 
@@ -172,54 +175,100 @@ def _dispatch_table() -> dict[str, DispatchHandler]:
 
 def _dispatch_init(_: argparse.Namespace, root: Path) -> None:
     init_project(root)
+    print("ok: initialized .aiw/ [state: INIT]")
 
 
 def _dispatch_prd(_: argparse.Namespace, root: Path) -> None:
-    prd(root)
+    session = prd(root)
+    print(f"ok: entered PRD drafting [state: {_result_state(session, 'PRD_DRAFT')}]")
 
 
 def _dispatch_approve_prd(_: argparse.Namespace, root: Path) -> None:
-    approve_prd(root)
+    result = approve_prd(root)
+    print(
+        "ok: PRD approved and locked "
+        f"[state: {_result_state(result, 'PRD_APPROVED')}]"
+    )
 
 
 def _dispatch_sdd(_: argparse.Namespace, root: Path) -> None:
-    sdd(root)
+    session = sdd(root)
+    print(f"ok: entered SDD drafting [state: {_result_state(session, 'SDD_DRAFT')}]")
 
 
 def _dispatch_approve_sdd(_: argparse.Namespace, root: Path) -> None:
-    approve_sdd(root)
+    result = approve_sdd(root)
+    print(
+        "ok: SDD approved and locked "
+        f"[state: {_result_state(result, 'SDD_APPROVED')}]"
+    )
 
 
 def _dispatch_adrs(_: argparse.Namespace, root: Path) -> None:
-    adrs(root)
+    session = adrs(root)
+    print(
+        f"ok: entered ADR drafting [state: {_result_state(session, 'ADRS_DRAFT')}]"
+    )
 
 
 def _dispatch_approve_adrs(_: argparse.Namespace, root: Path) -> None:
-    approve_adrs(root)
+    result = approve_adrs(root)
+    print(
+        "ok: ADRs approved and locked "
+        f"[state: {_result_state(result, 'ADRS_APPROVED')}]"
+    )
 
 
 def _dispatch_constraints(_: argparse.Namespace, root: Path) -> None:
-    constraints(root)
+    session = constraints(root)
+    print(
+        "ok: entered constraints drafting "
+        f"[state: {_result_state(session, 'CONSTRAINTS_DRAFT')}]"
+    )
 
 
 def _dispatch_approve_constraints(_: argparse.Namespace, root: Path) -> None:
-    approve_constraints(root)
+    result = approve_constraints(root)
+    print(
+        "ok: constraints approved and locked "
+        f"[state: {_result_state(result, 'CONSTRAINTS_APPROVED')}]"
+    )
 
 
 def _dispatch_decompose(_: argparse.Namespace, root: Path) -> None:
-    decompose(root)
+    result = decompose(root)
+    task_count = sum(
+        1
+        for path in getattr(result, "written_files", ())
+        if Path(path).name.startswith("TASK-")
+    )
+    print(
+        "ok: decomposed into "
+        f"{task_count} tasks [state: {_result_state(result, 'PLANNED')}]"
+    )
 
 
 def _dispatch_go(args: argparse.Namespace, root: Path) -> None:
-    go(root, args.task_id)
+    result = go(root, args.task_id)
+    status = getattr(result, "status", None)
+    run_id = getattr(result, "run_id", None)
+    if not isinstance(status, str) or not isinstance(run_id, str):
+        return
+    status_line = f"{args.task_id} {status} [run_id: {run_id}]"
+    if status == "BLOCKED":
+        print(f"blocked: {status_line}", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"ok: {status_line}")
 
 
 def _dispatch_undo(_: argparse.Namespace, root: Path) -> None:
     undo(root)
+    print("ok: reverted to last checkpoint")
 
 
 def _dispatch_reset(args: argparse.Namespace, root: Path) -> None:
     reset(root, args.task_id)
+    print(f"ok: reset to {args.task_id} baseline")
 
 
 def _dispatch_request_change(args: argparse.Namespace, root: Path) -> None:
@@ -229,6 +278,7 @@ def _dispatch_request_change(args: argparse.Namespace, root: Path) -> None:
         reason=args.reason,
         impact=args.impact,
     )
+    print("ok: change request written to docs/requests/CHANGE_REQUEST.md")
 
 
 def _load_repo_constraints(root: Path) -> ConstraintsConfig | None:
@@ -246,6 +296,7 @@ def _handle_stale_execution(root: Path, constraints: ConstraintsConfig) -> int |
         return None
 
     recover_stale_execution(state_path)
+    _sync_legacy_state_field(state_path)
     message = (
         "stale EXECUTING state detected; transitioned workflow to BLOCKED. "
         "Resolve manually before re-running."
@@ -298,6 +349,27 @@ def _read_current_state(state_path: Path) -> str:
 
     raise ValueError(
         "workflow state file missing string field 'current_state' or 'state'"
+    )
+
+
+def _result_state(result: object, fallback: str) -> str:
+    state = getattr(result, "state", None)
+    return state if isinstance(state, str) else fallback
+
+
+def _sync_legacy_state_field(state_path: Path) -> None:
+    data = json.loads(state_path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError("workflow state file must contain a JSON object")
+    current_state = data.get("current_state")
+    if not isinstance(current_state, str):
+        raise ValueError("workflow state file missing string field 'current_state'")
+    if data.get("state") == current_state:
+        return
+    data["state"] = current_state
+    state_path.write_text(
+        json.dumps(data, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
     )
 
 
