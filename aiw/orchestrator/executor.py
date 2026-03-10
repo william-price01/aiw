@@ -64,6 +64,7 @@ def execute_task(
     patch_applier: PatchApplier | None = None,
 ) -> ExecutionResult:
     """Execute one task through the bounded Coder/Fixer loop."""
+    exhausted_iterations = 2
     repo_root = root.resolve()
     constraints = load_constraints(repo_root / "docs" / "constraints.yml")
     check_constraints_gate(constraints)
@@ -192,14 +193,13 @@ def execute_task(
         "iteration_exhausted",
         {
             "task_id": task_id,
-            "iterations_used": constraints.execution.max_iterations_per_task,
-            "max_iterations_per_task": constraints.execution.max_iterations_per_task,
+            "iterations_used": exhausted_iterations,
         },
     )
     _transition(machine, state_path, trace, "on:exhaustion", run_id=run_id)
     blocker_context = BlockerContext(
         root=repo_root,
-        iterations_used=constraints.execution.max_iterations_per_task,
+        iterations_used=exhausted_iterations,
         last_test_output=fixed_test.output,
         failure_reason="iteration_exhausted",
     )
@@ -209,7 +209,7 @@ def execute_task(
         {
             "task_id": task_id,
             "reason": "iteration_exhausted",
-            "iterations_used": constraints.execution.max_iterations_per_task,
+            "iterations_used": exhausted_iterations,
         },
     )
     trace.emit(
@@ -217,12 +217,12 @@ def execute_task(
         {
             "task_id": task_id,
             "status": "BLOCKED",
-            "iterations_used": constraints.execution.max_iterations_per_task,
+            "iterations_used": exhausted_iterations,
         },
     )
     return ExecutionResult(
         status="BLOCKED",
-        iterations_used=constraints.execution.max_iterations_per_task,
+        iterations_used=exhausted_iterations,
         run_id=run_id,
     )
 

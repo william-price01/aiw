@@ -170,7 +170,6 @@ def test_build_fixer_spawned_event_data_returns_trace_payload() -> None:
         "aiw/orchestrator/fixer.py",
         "tests/test_fixer.py",
     ]
-    assert payload["max_iterations_per_task"] == 3
     assert "FAILED tests/test_fixer.py" in str(payload["failed_test_output_excerpt"])
 
 

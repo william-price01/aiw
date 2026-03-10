@@ -156,6 +156,8 @@ workflow:
     - aiw request-change
     PLANNED:
     - aiw go TASK-###
+    - aiw run
+    - aiw run --resume
     - aiw request-change
     EXECUTING:
     - aiw undo

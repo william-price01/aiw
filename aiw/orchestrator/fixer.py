@@ -99,7 +99,6 @@ def build_fixer_spawned_event_data(
         "task_id": task_spec.task_id,
         "trigger": "test_failed",
         "write_scope_allowlist": list(task_spec.file_scope_allowlist),
-        "max_iterations_per_task": constraints.execution.max_iterations_per_task,
         "failed_test_output_excerpt": _truncate_test_output(test_output),
     }
 
