@@ -46,7 +46,6 @@ def _render_entry(task_id: str, run_result: ExecutionResult, output_dir: Path) -
         "",
         f"- Chosen task: `{chosen_task}`",
         f"- Constraints hash: `{constraints_hash}`",
-        f"- Iterations used: `{run_result.iterations_used}`",
         f"- Termination: `{run_result.status}`",
         "",
         "### Diff Summaries",

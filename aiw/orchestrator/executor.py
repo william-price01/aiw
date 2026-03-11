@@ -1,4 +1,4 @@
-"""Bounded task execution loop for AIW task runs."""
+"""Task execution orchestration for AIW task runs."""
 from __future__ import annotations
 
 import os
@@ -22,23 +22,20 @@ from aiw.orchestrator.coder import (
     TaskSpec,
     run_coder_session,
 )
-from aiw.orchestrator.fixer import build_fixer_spawned_event_data, run_fixer_session
 from aiw.tasks.lint import check_task_lint
 from aiw.workflow import WorkflowStateMachine
 from aiw.workflow.gates import check_constraints_gate
 from aiw.workflow.locking import LockViolationError, check_lock_violations
 
 PatchRunner = Callable[[TaskSpec, ConstraintsConfig], PatchResult]
-FixerRunner = Callable[[TaskSpec, str, ConstraintsConfig], PatchResult]
 PatchApplier = Callable[[str, Path], None]
 
 
 @dataclass(frozen=True)
 class ExecutionResult:
-    """Structured terminal result for a bounded task execution run."""
+    """Structured terminal result for a task execution run."""
 
     status: str
-    iterations_used: int
     run_id: str
 
 
@@ -60,11 +57,9 @@ def execute_task(
     root: Path,
     *,
     coder_runner: PatchRunner | None = None,
-    fixer_runner: FixerRunner | None = None,
     patch_applier: PatchApplier | None = None,
 ) -> ExecutionResult:
-    """Execute one task through the bounded Coder/Fixer loop."""
-    exhausted_iterations = 2
+    """Execute one task through a single Coder session."""
     repo_root = root.resolve()
     constraints = load_constraints(repo_root / "docs" / "constraints.yml")
     check_constraints_gate(constraints)
@@ -97,7 +92,6 @@ def execute_task(
         create_checkpoint(f"{task_id} baseline")
 
     run_coder = coder_runner or _default_coder_runner(repo_root)
-    run_fixer = fixer_runner or _default_fixer_runner(repo_root)
     apply_patch = patch_applier or _apply_patch
 
     try:
@@ -111,12 +105,11 @@ def execute_task(
             run_id=run_id,
             phase="coder",
             detail=str(exc),
-            iterations_used=1,
         )
     _emit_patch_validation_events(trace, task_id, "coder", coder_patch)
     apply_patch(coder_patch.patch, repo_root)
 
-    initial_test = _run_tests(repo_root, constraints, trace, task_id, 1)
+    initial_test = _run_tests(repo_root, constraints, trace, task_id)
     if initial_test.passed:
         return _finalize_pass(
             machine=machine,
@@ -125,91 +118,29 @@ def execute_task(
             constraints=constraints,
             task_id=task_id,
             run_id=run_id,
-            iterations_used=1,
             repo_root=repo_root,
         )
 
     trace.emit(
         "test_run_failed",
-        {"task_id": task_id, "iteration": 1, "exit_code": initial_test.exit_code},
+        {"task_id": task_id, "exit_code": initial_test.exit_code},
     )
     trace.emit(
         "quality_gate_failed",
         {
             "task_id": task_id,
             "gate": "tests",
-            "iteration": 1,
             "exit_code": initial_test.exit_code,
         },
     )
-    trace.emit(
-        "fixer_spawned",
-        build_fixer_spawned_event_data(task_spec, initial_test.output, constraints),
-    )
-
-    try:
-        fixer_patch = run_fixer(task_spec, initial_test.output, constraints)
-    except PatchValidationError as exc:
-        return _finalize_patch_validation_failure(
-            machine=machine,
-            state_path=state_path,
-            trace=trace,
-            task_id=task_id,
-            run_id=run_id,
-            phase="fixer",
-            detail=str(exc),
-            iterations_used=2,
-        )
-    _emit_patch_validation_events(trace, task_id, "fixer", fixer_patch)
-    apply_patch(fixer_patch.patch, repo_root)
-
-    fixed_test = _run_tests(repo_root, constraints, trace, task_id, 2)
-    if fixed_test.passed:
-        return _finalize_pass(
-            machine=machine,
-            state_path=state_path,
-            trace=trace,
-            constraints=constraints,
-            task_id=task_id,
-            run_id=run_id,
-            iterations_used=2,
-            repo_root=repo_root,
-        )
-
-    trace.emit(
-        "test_run_failed",
-        {"task_id": task_id, "iteration": 2, "exit_code": fixed_test.exit_code},
-    )
-    trace.emit(
-        "quality_gate_failed",
-        {
-            "task_id": task_id,
-            "gate": "tests",
-            "iteration": 2,
-            "exit_code": fixed_test.exit_code,
-        },
-    )
-    trace.emit(
-        "iteration_exhausted",
-        {
-            "task_id": task_id,
-            "iterations_used": exhausted_iterations,
-        },
-    )
     _transition(machine, state_path, trace, "on:exhaustion", run_id=run_id)
-    blocker_context = BlockerContext(
-        root=repo_root,
-        iterations_used=exhausted_iterations,
-        last_test_output=fixed_test.output,
-        failure_reason="iteration_exhausted",
-    )
+    blocker_context = BlockerContext(repo_root, 1, initial_test.output, "test_failed")
     generate_blocker_report(task_id, blocker_context)
     trace.emit(
         "blocked",
         {
             "task_id": task_id,
-            "reason": "iteration_exhausted",
-            "iterations_used": exhausted_iterations,
+            "reason": "test_failed",
         },
     )
     trace.emit(
@@ -217,14 +148,9 @@ def execute_task(
         {
             "task_id": task_id,
             "status": "BLOCKED",
-            "iterations_used": exhausted_iterations,
         },
     )
-    return ExecutionResult(
-        status="BLOCKED",
-        iterations_used=exhausted_iterations,
-        run_id=run_id,
-    )
+    return ExecutionResult(status="BLOCKED", run_id=run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -234,12 +160,6 @@ def execute_task(
 def _default_coder_runner(repo_root: Path) -> PatchRunner:
     return lambda task_spec, constraints: run_coder_session(
         task_spec, constraints, repo_root=repo_root
-    )
-
-
-def _default_fixer_runner(repo_root: Path) -> FixerRunner:
-    return lambda task_spec, test_output, constraints: run_fixer_session(
-        task_spec, test_output, constraints, repo_root=repo_root
     )
 
 
@@ -288,7 +208,6 @@ def _run_tests(
     constraints: ConstraintsConfig,
     trace: TraceEmitter,
     task_id: str,
-    iteration: int,
 ) -> TestRunResult:
     command = _parse_command(constraints.quality.test_command)
     _clear_python_caches(repo_root)
@@ -303,7 +222,7 @@ def _run_tests(
 
     trace.emit(
         "test_run_started",
-        {"task_id": task_id, "iteration": iteration, "command": command},
+        {"task_id": task_id, "command": command},
     )
 
     completed = subprocess.run(
@@ -323,7 +242,6 @@ def _run_tests(
             "test_run_passed",
             {
                 "task_id": task_id,
-                "iteration": iteration,
                 "exit_code": completed.returncode,
             },
         )
@@ -349,7 +267,6 @@ def _finalize_pass(
     constraints: ConstraintsConfig,
     task_id: str,
     run_id: str,
-    iterations_used: int,
     repo_root: Path,
 ) -> ExecutionResult:
     if constraints.execution.task_completion.enabled:
@@ -365,13 +282,9 @@ def _finalize_pass(
     _transition(machine, state_path, trace, "on:success", run_id=run_id)
     trace.emit(
         "run_complete",
-        {"task_id": task_id, "status": "PASS", "iterations_used": iterations_used},
+        {"task_id": task_id, "status": "PASS"},
     )
-    return ExecutionResult(
-        status="PASS",
-        iterations_used=iterations_used,
-        run_id=run_id,
-    )
+    return ExecutionResult(status="PASS", run_id=run_id)
 
 
 def _finalize_patch_validation_failure(
@@ -383,7 +296,6 @@ def _finalize_patch_validation_failure(
     run_id: str,
     phase: str,
     detail: str,
-    iterations_used: int,
 ) -> ExecutionResult:
     trace.emit(
         "scope_validation",
@@ -416,14 +328,9 @@ def _finalize_patch_validation_failure(
         {
             "task_id": task_id,
             "status": "BLOCKED",
-            "iterations_used": iterations_used,
         },
     )
-    return ExecutionResult(
-        status="BLOCKED",
-        iterations_used=iterations_used,
-        run_id=run_id,
-    )
+    return ExecutionResult(status="BLOCKED", run_id=run_id)
 
 
 def _append_task_completion(

@@ -16,7 +16,6 @@ def test_write_capsule_log_writes_required_markdown_sections(tmp_path: Path) -> 
     )
     result = _result(
         status="PASS",
-        iterations_used=2,
         run_id="run-123",
         diff_summaries=[
             "Iteration 1: updated aiw/tasks/capsule_log.py",
@@ -58,7 +57,6 @@ def test_write_capsule_log_appends_multiple_runs(tmp_path: Path) -> None:
     _write_constraints(tmp_path, "quality:\n  test_command: pytest -q\n")
     first = _result(
         status="BLOCKED",
-        iterations_used=3,
         run_id="run-1",
         constraints_hash="hash-1",
         diff_summaries=["Iteration 1: initial patch"],
@@ -66,7 +64,6 @@ def test_write_capsule_log_appends_multiple_runs(tmp_path: Path) -> None:
     )
     second = _result(
         status="PASS",
-        iterations_used=1,
         run_id="run-2",
         constraints_hash="hash-2",
         diff_summaries=["Iteration 1: follow-up patch"],
@@ -94,7 +91,6 @@ def _write_constraints(tmp_path: Path, content: str) -> None:
 def _result(
     *,
     status: str,
-    iterations_used: int,
     run_id: str,
     constraints_hash: str | None = None,
     diff_summaries: list[object] | None = None,
@@ -105,7 +101,6 @@ def _result(
 ) -> ExecutionResult:
     result = ExecutionResult(
         status=status,
-        iterations_used=iterations_used,
         run_id=run_id,
     )
     extras = {

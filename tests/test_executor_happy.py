@@ -74,7 +74,6 @@ def test_go_executes_happy_path_and_marks_completion(
     result = go(repo_root, "TASK-015")
 
     assert result.status == "PASS"
-    assert result.iterations_used == 1
     UUID(result.run_id)
 
     assert checkpoint_calls == ["TASK-015 baseline"]
