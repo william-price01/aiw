@@ -186,7 +186,6 @@ class StaleExecutionPolicyConfig:
 
 @dataclass(frozen=True)
 class ExecutionConfig:
-    max_iterations_per_task: int
     task_completion: TaskCompletionConfig
     constraints_finalization_gate: ConstraintsFinalizationGateConfig
     run_id: RunIdConfig
@@ -748,10 +747,6 @@ def _parse_execution(root: Mapping[str, object]) -> ExecutionConfig:
     )
 
     return ExecutionConfig(
-        max_iterations_per_task=_as_int(
-            _required(section, "max_iterations_per_task", "execution"),
-            "execution.max_iterations_per_task",
-        ),
         task_completion=task_completion,
         constraints_finalization_gate=gate,
         run_id=run_id,

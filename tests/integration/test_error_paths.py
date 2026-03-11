@@ -46,7 +46,7 @@ def test_invalid_state_transitions_are_rejected_across_workflow(
     assert f"state {state!r}" in captured.err
 
 
-def test_execution_exhaustion_transitions_to_blocked_and_generates_blocker_report(
+def test_execution_failure_transitions_to_blocked_and_generates_blocker_report(
     integration_repo_factory: Any,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -62,25 +62,9 @@ def test_execution_exhaustion_transitions_to_blocked_and_generates_blocker_repor
         ),
     )
     monkeypatch.setattr(
-        "aiw.orchestrator.executor.run_fixer_session",
-        lambda task_spec, test_output, constraints, repo_root=None, codex_runner=None: (
-            PatchResult(
-                changed_files=("aiw/example.py",),
-                diff_stats=DiffStats(files_changed=1, lines_changed=2),
-                success=True,
-                patch="",
-            )
-        ),
-    )
-    monkeypatch.setattr(
         "aiw.orchestrator.executor._apply_patch", lambda patch, root: None
     )
     test_results = [
-        ExecutorTestRunResult(
-            passed=False,
-            output="1 failed\nassert VALUE == 2\n",
-            exit_code=1,
-        ),
         ExecutorTestRunResult(
             passed=False,
             output="1 failed\nassert VALUE == 2\n",
@@ -93,12 +77,11 @@ def test_execution_exhaustion_transitions_to_blocked_and_generates_blocker_repor
         constraints: object,
         trace: Any,
         task_id: str,
-        iteration: int,
     ) -> ExecutorTestRunResult:
         del repo_root, constraints
         trace.emit(
             "test_run_started",
-            {"task_id": task_id, "iteration": iteration, "command": ["pytest", "-q"]},
+            {"task_id": task_id, "command": ["pytest", "-q"]},
         )
         return test_results.pop(0)
 
@@ -107,7 +90,7 @@ def test_execution_exhaustion_transitions_to_blocked_and_generates_blocker_repor
         failing_run_tests,
     )
 
-    assert main(["go", repo.task_id], root=repo.root) == 0
+    assert main(["go", repo.task_id], root=repo.root) == 1
 
     state = repo.read_state()
     assert state["current_state"] == "BLOCKED"
@@ -116,7 +99,7 @@ def test_execution_exhaustion_transitions_to_blocked_and_generates_blocker_repor
     assert report_path.is_file()
     report = report_path.read_text(encoding="utf-8")
     assert f"- Task ID: {repo.task_id}" in report
-    assert "- Failure reason: iteration_exhausted" in report
+    assert "- Failure reason: test_failed" in report
 
     events = repo.read_trace_events()
     event_types = [event["event_type"] for event in events]
@@ -128,21 +111,13 @@ def test_execution_exhaustion_transitions_to_blocked_and_generates_blocker_repor
         "test_run_started",
         "test_run_failed",
         "quality_gate_failed",
-        "fixer_spawned",
-        "scope_validation",
-        "diff_threshold_check",
-        "test_run_started",
-        "test_run_failed",
-        "quality_gate_failed",
-        "iteration_exhausted",
         "state_transition",
         "blocked",
         "run_complete",
     ]
     assert _event(events, "blocked")["payload"] == {
         "task_id": repo.task_id,
-        "reason": "iteration_exhausted",
-        "iterations_used": 3,
+        "reason": "test_failed",
     }
 
 
@@ -204,7 +179,7 @@ def test_diff_threshold_exceeded_is_rejected_and_blocks_run(
         raise_diff_violation,
     )
 
-    assert main(["go", repo.task_id], root=repo.root) == 0
+    assert main(["go", repo.task_id], root=repo.root) == 1
 
     assert repo.read_state()["current_state"] == "BLOCKED"
     events = repo.read_trace_events()

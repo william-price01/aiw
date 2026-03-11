@@ -15,7 +15,7 @@ def test_happy_path_progresses_from_init_through_pass(
     repo_root = happy_path_repo.root
 
     assert main(["init"], root=repo_root) == 0
-    assert _read_state(repo_root) == {"state": "INIT"}
+    assert _read_state(repo_root)["current_state"] == "INIT"
     assert (repo_root / ".aiw" / "runs").is_dir()
 
     for argv, expected_state in (
@@ -29,7 +29,6 @@ def test_happy_path_progresses_from_init_through_pass(
         (["approve-constraints"], "CONSTRAINTS_APPROVED"),
     ):
         assert main(argv, root=repo_root) == 0
-        assert _read_state(repo_root)["state"] == expected_state
         assert _read_state(repo_root)["current_state"] == expected_state
 
     assert (repo_root / "docs" / "prd.md").is_file()
@@ -38,7 +37,7 @@ def test_happy_path_progresses_from_init_through_pass(
     assert (repo_root / "docs" / "constraints.yml").is_file()
 
     assert main(["decompose"], root=repo_root) == 0
-    assert _read_state(repo_root)["state"] == "PLANNED"
+    assert _read_state(repo_root)["current_state"] == "PLANNED"
     assert (repo_root / "docs" / "tasks" / "DAG.md").is_file()
     assert (repo_root / "docs" / "tasks" / "DAG.yml").is_file()
     assert (repo_root / "docs" / "tasks" / "TASK-001.md").is_file()
